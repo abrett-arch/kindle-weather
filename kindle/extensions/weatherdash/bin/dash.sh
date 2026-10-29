@@ -107,6 +107,12 @@ while true; do
     fi
   fi
 
+  # every ten minutes (at :05, :15, ...): install newer dashboard code from GitHub, then restart
+  if [ $(( MIN % 10 )) -eq 5 ] && sh "$DIR/bin/selfupdate.sh" >> "$LOG" 2>&1; then
+    log "restarting on new code"
+    exec /bin/sh "$DIR/bin/dash.sh"
+  fi
+
   if wait_wifi && check_version; then
     if { [ "$v" != "$last" ] || [ $fails -gt 1 ]; } && fetch_image; then
       sum="$(md5sum "$TMP" | cut -d' ' -f1)"

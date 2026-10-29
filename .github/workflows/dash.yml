@@ -44,6 +44,16 @@ jobs:
       - name: Message page for the iPhone
         run: cp web/* site/
 
+      - name: Kindle code for over-the-air updates (site/kindle + manifest.txt)
+        run: |
+          src=kindle/extensions/weatherdash; dst="$PWD/site/kindle"
+          mkdir -p "$dst"
+          ( cd "$src" && find . -type f ! -name '*.log' | sed 's|^\./||' | LC_ALL=C sort | while read -r f; do
+              mkdir -p "$dst/$(dirname "$f")"; cp "$f" "$dst/$f"; echo "$(md5sum "$f" | cut -d' ' -f1) $f"
+            done ) > files.txt
+          { echo "version $(md5sum files.txt | cut -c1-12)"; cat files.txt; } > "$dst/manifest.txt"
+          head -1 "$dst/manifest.txt"
+
       - name: Index page
         run: |
           cat > site/index.html <<'HTML'

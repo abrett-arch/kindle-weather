@@ -3,3 +3,4 @@ site/
 prev_state.json
 __pycache__/
 prev_dash.png
+files.txt
