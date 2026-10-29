@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Kindle board">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Kindle board</title>
+<style>
+  :root {
+    --bg: #f4f3f0; --card: #ffffff; --ink: #161616; --muted: #6b6b6b; --line: #dcdad5;
+    --tile: #2b2b2b; --tile-top: #3d3d3d; --accent: #161616; --ok: #2f6b3a; --err: #a3332b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141414; --card: #1e1e1e; --ink: #f1f1f1; --muted: #a0a0a0; --line: #333;
+            --tile: #0d0d0d; --tile-top: #232323; --accent: #f1f1f1; --ok: #7fc28b; --err: #f08a80; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 17px/1.4 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+         padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+  main { max-width: 560px; margin: 0 auto; display: grid; gap: 16px; }
+  h1 { display: flex; gap: 4px; margin: 6px 0 2px; }
+  h1 span { display: inline-grid; place-items: center; width: 30px; height: 44px; border-radius: 5px;
+            color: #fff; font: 700 24px/1 -apple-system, sans-serif;
+            background: linear-gradient(var(--tile-top) 50%, var(--tile) 50%); position: relative; }
+  h1 span::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; background: var(--bg); }
+  h1 .gap { background: none; width: 10px; }
+  h1 .gap::after { display: none; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+  label.h { display: block; font-size: 13px; font-weight: 600; letter-spacing: .06em; color: var(--muted);
+            text-transform: uppercase; margin-bottom: 8px; }
+  textarea { width: 100%; min-height: 96px; resize: vertical; font: inherit; font-size: 20px;
+             text-transform: uppercase; border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+             background: var(--bg); color: var(--ink); }
+  .count { text-align: right; font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 999px;
+          padding: 9px 14px; font: inherit; font-size: 15px; cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+  input[type=time], input[type=password] { font: inherit; padding: 9px 10px; border-radius: 10px;
+          border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  input[type=password] { width: 100%; }
+  button.primary, button.secondary { width: 100%; font: inherit; font-weight: 600; padding: 14px;
+          border-radius: 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--bg); border: none; font-size: 18px; }
+  button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  button:disabled { opacity: .5; }
+  .status { min-height: 1.4em; font-size: 15px; }
+  .status.ok { color: var(--ok); } .status.err { color: var(--err); }
+  .now { font-size: 15px; color: var(--muted); }
+  .now b { color: var(--ink); }
+  img.preview { width: 100%; border-radius: 10px; border: 1px solid var(--line); background: #fff; display: block; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 15px; }
+  details ol { padding-left: 20px; font-size: 15px; }
+  .small { font-size: 13px; color: var(--muted); }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1 aria-label="Kindle board"><span>K</span><span>I</span><span>N</span><span>D</span><span>L</span><span>E</span></h1>
+
+  <section class="card" id="compose">
+    <label class="h" for="text">Message</label>
+    <textarea id="text" maxlength="120" placeholder="Dinner's ready" autocomplete="off"></textarea>
+    <div class="count"><span id="count">0</span>/120 · shown in capitals, on flap tiles</div>
+  </section>
+
+  <section class="card">
+    <label class="h">Back to weather</label>
+    <div class="chips" id="chips">
+      <button class="chip" data-min="15">In 15 min</button>
+      <button class="chip" data-min="60" aria-pressed="true">In 1 hour</button>
+      <button class="chip" data-min="180">In 3 hours</button>
+      <button class="chip" data-midnight="1">At midnight</button>
+      <button class="chip" data-never="1">When I clear it</button>
+      <button class="chip" data-at="1">At a time…</button>
+    </div>
+    <div class="row" id="atrow" hidden>
+      <input type="time" id="attime" value="18:00"> <span class="small">today (tomorrow if already past)</span>
+    </div>
+  </section>
+
+  <button class="primary" id="send">Show on Kindle</button>
+  <button class="secondary" id="clear">Back to weather now</button>
+  <div class="status" id="status" role="status"></div>
+
+  <section class="card">
+    <label class="h">On the Kindle now</label>
+    <div class="now" id="now">Checking…</div>
+    <p class="small">Changes reach the Kindle in about 2–3 minutes.</p>
+    <img class="preview" id="preview" alt="What the Kindle is showing">
+  </section>
+
+  <section class="card" id="setup">
+    <details id="setupbox">
+      <summary id="setupsum">Set up this phone</summary>
+      <ol>
+        <li>On GitHub: <b>Settings → Developer settings → Fine-grained tokens → Generate new token</b>.</li>
+        <li>Repository access: <b>Only select repositories → kindle-weather</b>.</li>
+        <li>Permissions: <b>Contents → Read and write</b>. Expiration: up to you (you'll repeat this when it expires).</li>
+        <li>Paste the token below. It's kept only on this phone.</li>
+      </ol>
+      <input type="password" id="token" placeholder="github_pat_…" autocomplete="off">
+      <div class="row">
+        <button class="secondary" id="savetok">Save token</button>
+        <button class="secondary" id="forget">Forget</button>
+      </div>
+    </details>
+  </section>
+</main>
+
+<script>
+const REPO = "abrett-arch/kindle-weather";
+const FILE = "message.json";
+const API = `https://api.github.com/repos/${REPO}/contents/${FILE}`;
+const $ = id => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} },
+};
+let choice = { min: 60 };
+
+function status(msg, kind) { const s = $("status"); s.textContent = msg; s.className = "status " + (kind || ""); }
+function token() { return store.get("kindle_token"); }
+function refreshSetup() {
+  const has = !!token();
+  $("setupsum").textContent = has ? "This phone is set up (token saved)" : "Set up this phone (needed once)";
+  $("setupbox").open = !has;
+}
+
+$("text").addEventListener("input", () => { $("count").textContent = $("text").value.length; });
+$("chips").addEventListener("click", e => {
+  const b = e.target.closest(".chip"); if (!b) return;
+  document.querySelectorAll(".chip").forEach(c => c.setAttribute("aria-pressed", c === b ? "true" : "false"));
+  choice = { ...b.dataset };
+  $("atrow").hidden = !b.dataset.at;
+});
+
+function isoLocal(d) {                       // 2026-10-30T19:30:00+11:00
+  const p = n => String(n).padStart(2, "0");
+  const off = -d.getTimezoneOffset(), sign = off >= 0 ? "+" : "-", a = Math.abs(off);
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:00${sign}${p(Math.floor(a / 60))}:${p(a % 60)}`;
+}
+function untilTime() {
+  const now = new Date();
+  if (choice.never) return null;
+  if (choice.midnight) { const d = new Date(now); d.setHours(24, 0, 0, 0); return isoLocal(d); }
+  if (choice.at) {
+    const [h, m] = $("attime").value.split(":").map(Number);
+    const d = new Date(now); d.setHours(h, m, 0, 0);
+    if (d <= now) d.setDate(d.getDate() + 1);
+    return isoLocal(d);
+  }
+  return isoLocal(new Date(now.getTime() + Number(choice.min || 60) * 60000));
+}
+
+function b64(str) { return btoa(String.fromCharCode(...new TextEncoder().encode(str))); }
+
+async function write(payload, label) {
+  const t = token();
+  if (!t) { status("Set up this phone first (bottom of the page).", "err"); $("setupbox").open = true; return; }
+  const headers = { "Authorization": `Bearer ${t}`, "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28" };
+  $("send").disabled = $("clear").disabled = true;
+  status("Sending…");
+  try {
+    let sha;
+    const cur = await fetch(API, { headers, cache: "no-store" });
+    if (cur.ok) sha = (await cur.json()).sha;
+    else if (cur.status !== 404) throw new Error(cur.status === 401 ? "the token was refused — set it up again" : `GitHub said ${cur.status}`);
+    const res = await fetch(API, { method: "PUT", headers, body: JSON.stringify({
+      message: label, content: b64(JSON.stringify(payload, null, 1) + "\n"), ...(sha ? { sha } : {}) }) });
+    if (!res.ok) throw new Error(res.status === 401 || res.status === 403
+      ? "the token can't write to kindle-weather — check its Contents permission" : `GitHub said ${res.status}`);
+    status(payload.text ? "Sent. It'll appear on the Kindle in about 2–3 minutes." : "Done. The weather comes back in about 2–3 minutes.", "ok");
+  } catch (e) {
+    status("Couldn't send: " + e.message, "err");
+  } finally {
+    $("send").disabled = $("clear").disabled = false;
+  }
+}
+
+$("send").addEventListener("click", () => {
+  const text = $("text").value.trim();
+  if (!text) { status("Type a message first.", "err"); return; }
+  write({ text, until: untilTime() }, "Kindle message");
+});
+$("clear").addEventListener("click", () => write({ text: "", until: null }, "Kindle back to weather"));
+$("savetok").addEventListener("click", () => {
+  const v = $("token").value.trim();
+  if (!v) return;
+  store.set("kindle_token", v); $("token").value = ""; refreshSetup(); status("Token saved on this phone.", "ok");
+});
+$("forget").addEventListener("click", () => { store.del("kindle_token"); refreshSetup(); status("Token removed from this phone."); });
+
+function fmt(iso) {
+  const d = new Date(iso), now = new Date();
+  const t = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === now.toDateString() ? t : d.toLocaleDateString([], { weekday: "short" }) + " " + t;
+}
+async function showNow() {
+  try {
+    const s = await (await fetch("showing.json?t=" + Date.now(), { cache: "no-store" })).json();
+    $("now").innerHTML = s.mode === "message"
+      ? `Message: <b>${s.text.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</b><br>` +
+        (s.until ? `Weather returns at ${fmt(s.until)}` : "Until you clear it")
+      : "<b>Weather</b>";
+  } catch (e) { $("now").textContent = "Couldn't check right now."; }
+  $("preview").src = "preview.png?t=" + Date.now();
+}
+refreshSetup(); showNow(); setInterval(showNow, 30000);
+</script>
+</body>
+</html>

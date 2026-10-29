@@ -876,6 +876,119 @@ def hero_values(data: dict, now: datetime):
     return t, f
 
 
+# ---------------------------------------------------------------- message mode
+def _wrap(words: list[str], cols: int) -> list[str] | None:
+    lines, cur = [], ""
+    for w in words:
+        if len(w) > cols:
+            return None
+        if not cur:
+            cur = w
+        elif len(cur) + 1 + len(w) <= cols:
+            cur += " " + w
+        else:
+            lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def render_message(text: str, until: datetime | None, now: datetime, data: dict | None) -> Image.Image:
+    """A departure-board style message: the words on split-flap tiles, biggest size that fits,
+    with a small weather line and the time it switches back underneath."""
+    img = Image.new("L", (W, H), WHITE)
+    d = ImageDraw.Draw(img)
+    text = " ".join(text.upper().split())[:120]
+    words = text.split(" ") if text else ["--"]
+    box_w, box_h = W - 2 * M, H - 2 * M - 120
+    best = None
+    for tile_w in range(150, 33, -4):                     # biggest tiles that fit
+        tile_h = int(tile_w * 1.55)
+        gap, lead = max(3, tile_w // 14), max(10, tile_w // 6)
+        cols = int((box_w + gap) // (tile_w + gap))
+        rows_fit = int((box_h + lead) // (tile_h + lead))
+        lines = _wrap(words, cols) if cols > 0 else None
+        if lines and len(lines) <= rows_fit:
+            best = (tile_w, tile_h, gap, lead, lines)
+            break
+    top = M - 10
+    if best:
+        tile_w, tile_h, gap, lead, lines = best
+        block_h = len(lines) * tile_h + (len(lines) - 1) * lead
+        y = top + (box_h - block_h) // 2
+        for line in lines:
+            line_w = len(line) * (tile_w + gap) - gap
+            x = (W - line_w) // 2
+            for ch in line:
+                img.paste(_tile(ch, tile_w, tile_h), (x, y))
+                x += tile_w + gap
+            y += tile_h + lead
+    else:                                                  # too long for tiles: plain big text
+        f = font("InterDisplay-Bold", 64)
+        lines, cur = [], ""
+        for w in words:
+            t = (cur + " " + w).strip()
+            if d.textlength(t, font=f) <= box_w:
+                cur = t
+            else:
+                lines.append(cur)
+                cur = w
+        lines.append(cur)
+        y = top + (box_h - len(lines) * 80) // 2
+        for line in lines:
+            d.text(((W - d.textlength(line, font=f)) / 2, y), line, font=f, fill=BLACK)
+            y += 80
+
+    # bottom strip: current weather + when it goes back
+    by = H - M - 70
+    d.line((M, by - 20, W - M, by - 20), fill=LIGHT, width=2)
+    f_b = font("Inter-SemiBold", 34)
+    f_r = font("Inter-Regular", 34)
+    left = ""
+    if data:
+        t, fe = hero_values(data, now)
+        days = data.get("days") or []
+        today = next((x for x in days if x["date"] == now.date()), days[0] if days else {})
+        if t is not None:
+            left = f"Hobart {t:.1f}°"
+            if fe is not None:
+                left += f", feels {fe:.1f}°"
+        if today.get("max") is not None:
+            left += f"  ·  today {deg(today.get('min'))} – {deg(today.get('max'))}"
+    d.text((M, by), left, font=f_b, fill=BLACK)
+    if until:
+        same_day = until.date() == now.date()
+        when = fmt_time(until) if same_day else until.strftime("%a ") + fmt_time(until)
+        right = f"Weather back at {when}"
+    else:
+        right = "Showing until cleared"
+    d.text((W - M - d.textlength(right, font=f_r), by), right, font=f_r, fill=MID)
+    return img
+
+
+def active_message(path: str | None, now: datetime) -> dict | None:
+    """The message to show now, from message.json in the repository (written by the iPhone
+    page): {"text": "...", "until": ISO time or null}. Empty text, or a past 'until', means
+    weather."""
+    try:
+        m = json.loads(Path(path).read_text()) if path and Path(path).is_file() else None
+    except Exception:  # noqa: BLE001
+        return None
+    if not m or not str(m.get("text") or "").strip():
+        return None
+    msg = {"text": str(m["text"])[:120], "until": m.get("until") or None}
+    if msg["until"]:
+        try:
+            until = datetime.fromisoformat(msg["until"]).astimezone(TZ)
+        except ValueError:
+            return None
+        if until <= now:
+            return None
+        msg["until_dt"] = until
+    return msg
+
+
 def main():
     import hashlib
     global FLAP, TILE_OVERRIDE
@@ -887,6 +1000,7 @@ def main():
     ap.add_argument("--prev", help="previous state.json (to animate from)")
     ap.add_argument("--fake-prev", help="pretend previous tiles, e.g. '11.6,9' (testing)")
     ap.add_argument("--prev-image", help="previous dash.png (for partial refresh)")
+    ap.add_argument("--message", help="message.json from the repository (set by the iPhone page)")
     a = ap.parse_args()
     FLAP = not a.plain
     now = datetime.now(TZ)
@@ -922,10 +1036,14 @@ def main():
             prev_updated = datetime.fromisoformat(prev["updated"])
         except ValueError:
             prev_updated = None
+    msg = active_message(a.message, now)
     updated = now
-    land = render(data, now, updated)
+    if msg:
+        land = render_message(msg["text"], msg.get("until_dt"), now, data)
+    else:
+        land = render(data, now, updated)
     img = to_device(land)
-    if prev_img is not None and prev_updated and prev_updated.date() == now.date():
+    if not msg and prev_img is not None and prev_updated and prev_updated.date() == now.date():
         same_land = render(data, now, prev_updated)
         if changed_regions(prev_img, to_device(same_land)) == []:
             land, img, updated = same_land, to_device(same_land), prev_updated
@@ -938,8 +1056,12 @@ def main():
 
     t, f = hero_values(data, now)
     state = {"temp": tile_text(t, 1), "feels": tile_text(f, 1), "generated": now.isoformat(),
-             "updated": updated.isoformat()}
+             "updated": updated.isoformat(), "mode": "message" if msg else "weather"}
     (out.parent / "state.json").write_text(json.dumps(state))
+    (out.parent / "showing.json").write_text(json.dumps(                # read by the iPhone page
+        {"mode": "message", "text": msg["text"], "until": msg.get("until")} if msg
+        else {"mode": "weather"}))
+    (out.parent / "version.txt").write_text(hashlib.md5(out.read_bytes()).hexdigest() + "\n")
     (out.parent / "status.json").write_text(json.dumps({
         "generated": now.isoformat(), "updated": updated.isoformat(),
         "sources": sorted(data["sources"]), "warnings": WARNINGS,
@@ -957,7 +1079,7 @@ def main():
         old.unlink()
     lines = [f"id {digest}", f"base {prev_digest or 'none'}"]
     frames = 0
-    if FLAP and prev:
+    if FLAP and prev and not msg and prev.get("mode", "weather") == "weather":
         ft = flip_frames(prev.get("temp", state["temp"]), state["temp"])
         ff = flip_frames(prev.get("feels", state["feels"]), state["feels"])
         n = max(len(ft), len(ff))

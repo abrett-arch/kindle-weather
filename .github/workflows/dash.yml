@@ -39,7 +39,10 @@ jobs:
           curl -fsS -m 20 "$base/dash.png" -o prev_dash.png || echo "no previous image"
 
       - name: Render
-        run: python render.py --out site/dash.png --prev prev_state.json --prev-image prev_dash.png
+        run: python render.py --out site/dash.png --prev prev_state.json --prev-image prev_dash.png --message message.json
+
+      - name: Message page for the iPhone
+        run: cp web/* site/
 
       - name: Index page
         run: |

@@ -36,4 +36,13 @@ get() {            # get URL FILE  (verified TLS, then unverified, then wget)
     || wget -q -T 60 -O "$2" "$1" 2>/dev/null
 }
 
+set_light() {      # $1 = 0..24 (same scale as the Kindle's light slider)
+  lipc-set-prop com.lab126.powerd flIntensity "$1" 2>/dev/null
+  for b in /sys/class/backlight/*/brightness; do      # belt and braces if powerd ignores it
+    [ -w "$b" ] || continue
+    max=$(cat "${b%/brightness}/max_brightness" 2>/dev/null)
+    [ -n "$max" ] && echo $(( $1 * max / 24 )) > "$b" 2>/dev/null
+  done
+}
+
 uptime_ms() { awk '{printf "%d", $1 * 1000}' /proc/uptime; }

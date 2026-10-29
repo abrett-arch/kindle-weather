@@ -24,6 +24,12 @@ wait_wifi() {
   return 1
 }
 
+check_version() {  # sets $v to the md5 of the currently published dash.png
+  get "$BASE/version.txt?t=$(date +%s)" "$DIR/version.new" || return 1
+  v="$(cut -c1-32 "$DIR/version.new")"
+  [ ${#v} -eq 32 ]
+}
+
 fetch_image() {
   rm -f "$TMP"
   get "$IMAGE_URL" "$TMP" && [ -s "$TMP" ] && head -c 8 "$TMP" | grep -q PNG
@@ -51,6 +57,7 @@ stop framework 2>/dev/null && log "stopped framework"
 [ -x /etc/init.d/framework ] && /etc/init.d/framework stop >/dev/null 2>&1 && log "stopped framework (init.d)"
 initctl stop webreader >/dev/null 2>&1
 lipc-set-prop com.lab126.powerd preventScreenSaver 1
+set_light "${LIGHT:-16}" && log "light ${LIGHT:-16}/24"
 trap - TERM
 sleep 2
 
@@ -60,9 +67,9 @@ fails=0
 partials=0        # in-place updates since the last full-screen clean-up
 FULL_EVERY=12     # full flash refresh after this many in-place updates (~3 hours)
 while true; do
-  if wait_wifi && fetch_image; then
-    sum="$(md5sum "$TMP" | cut -d' ' -f1)"
-    if [ "$sum" != "$last" ] || [ $fails -gt 1 ]; then
+  if wait_wifi && check_version; then
+    if { [ "$v" != "$last" ] || [ $fails -gt 1 ]; } && fetch_image; then
+      sum="$(md5sum "$TMP" | cut -d' ' -f1)"
       mode=full
       if [ -n "$last" ] && [ $fails -le 1 ] && fetch_delta "$sum"; then
         grep -q '^frame' "$DIR/delta/update.txt" && play_frames "$DIR/delta" && log "flipped"
@@ -80,6 +87,7 @@ while true; do
       last="$sum"
     fi
     fails=0
+    set_light "${LIGHT:-16}"
   else
     fails=$((fails + 1))
     log "update failed ($fails); wifi=$(lipc-get-prop com.lab126.wifid cmState 2>/dev/null)"

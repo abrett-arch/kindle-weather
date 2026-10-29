@@ -9,6 +9,10 @@ LOG="$DIR/test.log"
   echo "--- fbink -v";  "$FBINK" -v 2>&1 | head -5; echo "exit=$?"
   echo "--- wifi";      lipc-get-prop com.lab126.wifid cmState 2>&1
   echo "--- battery";   lipc-get-prop com.lab126.powerd battLevel 2>&1
+  echo "--- light (setting ${LIGHT:-16}/24)"
+  . "$DIR/config.sh"; set_light "${LIGHT:-16}"
+  echo "powerd flIntensity=$(lipc-get-prop com.lab126.powerd flIntensity 2>&1)"
+  for b in /sys/class/backlight/*/brightness; do echo "$b=$(cat "$b" 2>&1) max=$(cat "${b%/brightness}/max_brightness" 2>&1)"; done
   echo "--- https";     curl -sS -m 25 -o /dev/null -w "%{http_code}\n" https://abrett-arch.github.io/kindle-weather/dash.png 2>&1
   sleep 3   # let KUAL finish closing so its redraw doesn't paint over us
 
