@@ -30,10 +30,8 @@ banner() {         # offline.png | battery.png : pre-drawn notice over the heade
   read -r bx by < "$DIR/banner.txt" && draw_region "$DIR/$1" "$bx" "$by" calm
 }
 
-get() {            # get URL FILE  (verified TLS, then unverified, then wget)
-  curl -fsS -m 60 -o "$2" "$1" 2>/dev/null \
-    || curl -fsSk -m 60 -o "$2" "$1" 2>/dev/null \
-    || wget -q -T 60 -O "$2" "$1" 2>/dev/null
+get() {            # get URL FILE  (verified TLS only: the Kindle installs code this way)
+  curl -fsS --connect-timeout 15 -m 90 -o "$2" "$1" 2>/dev/null
 }
 
 set_light() {      # $1 = 0..24 (same scale as the Kindle's light slider)

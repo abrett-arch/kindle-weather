@@ -513,16 +513,18 @@ def draw_flap_number(img, specs, x, y, tile_w=92, tile_h=156):
         cx += tw + gap
     r = tile_h * 0.085
     d.ellipse((cx + 2, y + 4, cx + 2 + 2 * r, y + 4 + 2 * r), outline=BLACK, width=max(4, int(r * 0.42)))
+    return int(cx + 2 + 2 * r)
 
 
 def _align(old: str, new: str) -> tuple[str, str]:
-    """Make two tile strings line up (same length, decimal point in the same place)."""
+    """Make the old tile string line up with the new one (same length as the new string, so
+    the last frame matches the still image; decimal point in the same place)."""
     if "." in new and "." not in old:
         old = old.strip().rjust(2) + ".0"
     if "." in old and "." not in new:
         old = old.split(".")[0].rjust(2)
-    n = max(len(old), len(new))
-    return old.rjust(n), new.rjust(n)
+    n = len(new)
+    return old.rjust(n)[-n:], new
 
 
 def flip_frames(old: str, new: str, max_steps: int = 6) -> list[list]:
@@ -614,6 +616,13 @@ def text_w(d, txt, f):
     return d.textlength(txt, font=f)
 
 
+def fit(d, txt, name, size, max_w, min_size=18):
+    """The largest font (<= size) in which txt fits within max_w pixels."""
+    while size > min_size and d.textlength(txt, font=font(name, size)) > max_w:
+        size -= 2
+    return font(name, size)
+
+
 def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.Image:
     """Draw the dashboard in landscape (1448x1072), as the viewer sees it."""
     img = Image.new("L", (W, H), WHITE)
@@ -627,8 +636,16 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
     days = data.get("days") or []
     hourly = [h for h in (data.get("hourly") or []) if h["time"] and h["time"] > now][:24]
     now_obs = data.get("now") or {}
-    today = next((x for x in days if x["date"] == now.date()), days[0] if days else {})
+    today = next((x for x in days if x["date"] == now.date()), {})
     tomorrow_idx = next((i for i, x in enumerate(days) if x["date"] > now.date()), None)
+    if not today:                                   # BOM can drop today late in the day
+        today = {"date": now.date(), "text": "", "min": None, "max": None}
+    if today.get("max") is None:                    # ... or just today's max once it's passed
+        temps = [h["temp"] for h in (data.get("hourly") or [])
+                 if h.get("temp") is not None and h["time"] and h["time"].date() == now.date()]
+        if now_obs.get("temp") is not None:
+            temps.append(now_obs["temp"])
+        today = {**today, "max": max(temps) if temps else None}
     sr, ss = today.get("sunrise"), today.get("sunset")
     night = bool(sr and ss and not (sr <= now <= ss))
 
@@ -636,9 +653,12 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
     d.text((M, 34), PLACE, font=font("InterDisplay-Bold", 56), fill=BLACK)
     d.text((M + 236, 52), now.strftime("%A %-d %B"), font=font("Inter-Medium", 34), fill=MID)
     src = " + ".join(sorted(data.get("sources") or []))
-    right = f"Updated {fmt_time(updated or now)}" + (f" · {src}" if src else "")
-    if sr and ss:
-        right = f"↑ {fmt_time(sr)}   ↓ {fmt_time(ss)}      " + right
+    date_end = M + 236 + text_w(d, now.strftime("%A %-d %B"), font("Inter-Medium", 34)) + 30
+    upd = f"Updated {fmt_time(updated or now)}"
+    sun = f"↑ {fmt_time(sr)}   ↓ {fmt_time(ss)}      " if sr and ss else ""
+    for right in (sun + upd + (f" · {src}" if src else ""), sun + upd, upd):
+        if W - M - text_w(d, right, f_small) >= date_end:
+            break
     d.text((W - M - text_w(d, right, f_small), 56), right, font=f_small, fill=MID)
 
     # ---- hero: icon | temperature | feels like
@@ -655,15 +675,19 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
 
     t_now = now_obs.get("temp") if now_obs.get("temp") is not None else h0.get("temp")
     f_now = now_obs.get("feels") if now_obs.get("feels") is not None else h0.get("feels")
-    cols = ((t_now, "TEMPERATURE", "temp", 300), (f_now, "FEELS LIKE", "feels", 860))
     HERO_BOX = (290, hy, W - M, hy + 236)
-    for val, lab, key, cx0 in cols:
+    specs_t = (TILE_OVERRIDE or {}).get("temp") or list(tile_text(t_now, 1))
+    specs_f = (TILE_OVERRIDE or {}).get("feels") or list(tile_text(f_now, 1))
+    tile_w = 126 if max(len(specs_t), len(specs_f)) <= 4 else 104        # 3 whole digits: -12.3
+    cx0 = 300
+    for val, lab, specs in ((t_now, "TEMPERATURE", specs_t), (f_now, "FEELS LIKE", specs_f)):
         if FLAP:
-            specs = (TILE_OVERRIDE or {}).get(key) or list(tile_text(val, 1))
-            draw_flap_number(img, specs, cx0, hy + 6, tile_w=126, tile_h=214)
+            end = draw_flap_number(img, specs, cx0, hy + 6, tile_w=tile_w, tile_h=int(tile_w * 1.7))
         else:
             d.text((cx0, hy - 30), deg(val), font=font("InterDisplay-SemiBold", 250), fill=BLACK)
+            end = cx0 + 500
         d.text((cx0 + 4, hy + 236), lab, font=font("Inter-SemiBold", 28), fill=MID)
+        cx0 = max(860, end + 40)
 
     # ---- stats (left) + day panel (right)
     sy = 446
@@ -690,8 +714,10 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
             if i:
                 d.line((sx0 + i * sw, sy, sx0 + i * sw, sy + 116), fill=LIGHT, width=2)
             d.text((x0, sy), lab, font=f_lab, fill=MID)
-            d.text((x0, sy + 28), val, font=f_val, fill=BLACK)
-            d.text((x0 + text_w(d, val, f_val) + 2, sy + 50), unit, font=f_unit, fill=DARK)
+            room = sw - (26 if i else 0) - 24 - text_w(d, unit, f_unit)
+            fv = fit(d, val, "InterDisplay-Bold", 56, room, 34)
+            d.text((x0, sy + 28 + (56 - fv.size) * 0.8), val, font=fv, fill=BLACK)
+            d.text((x0 + text_w(d, val, fv) + 2, sy + 50), unit, font=f_unit, fill=DARK)
             if sub:
                 d.text((x0, sy + 94), sub, font=f_sub, fill=MID)
 
@@ -700,8 +726,8 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
     px0, py0, px1, py1 = 876, sy - 6, W - M, sy + 124
     d.rounded_rectangle((px0, py0, px1, py1), radius=22, fill=PALE)
     d.text((px0 + 28, py0 + 14), ("Tomorrow" if show_tomorrow else "Today").upper(), font=f_h2, fill=MID)
-    d.text((px0 + 28, py0 + 48), f"{deg(pday.get('min'))} – {deg(pday.get('max'))}",
-           font=font("InterDisplay-Bold", 54), fill=BLACK)
+    rng = f"{deg(pday.get('min'))} – {deg(pday.get('max'))}"
+    d.text((px0 + 28, py0 + 48), rng, font=fit(d, rng, "InterDisplay-Bold", 54, 214, 30), fill=BLACK)
     tx = px0 + 250
     text = (pday.get("text") or "").rstrip(".")
     f_pt = font("Inter-Medium", 32)
@@ -717,10 +743,8 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
         bits.append(r)
     if pday.get("uv") is not None:
         bits.append(f"UV {round(pday['uv'])} {uv_word(pday['uv']).lower()}")
-    f_pb = font("Inter-Regular", 27)
-    d.text((tx, py0 + 62), bits[0] if bits else "", font=f_pb, fill=DARK)
-    if len(bits) > 1:
-        d.text((tx, py0 + 94), bits[1], font=f_pb, fill=DARK)
+    for k, line in enumerate(bits[:2]):
+        d.text((tx, py0 + 62 + 32 * k), line, font=fit(d, line, "Inter-Regular", 27, px1 - tx - 16), fill=DARK)
 
     # ---- 24-hour chart
     cy0 = 596
@@ -744,8 +768,8 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
     gt0, gt1 = cy0 + 84, cy0 + 170          # temperature band
     gr0, gr1 = cy0 + 240, cy0 + 286         # rain-chance band
     every = 2
-    if len(hourly) >= 2:
-        vals = [v for h in hourly for v in (h.get("temp"), h.get("feels")) if v is not None]
+    vals = [v for h in hourly for v in (h.get("temp"), h.get("feels")) if v is not None]
+    if len(hourly) >= 2 and vals:
         tmin, tmax = math.floor(min(vals)), math.ceil(max(vals))
         if tmax - tmin < 6:
             pad = (6 - (tmax - tmin)) / 2
@@ -826,7 +850,10 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
     # ---- next five days, as columns
     ry = 938
     d.line((M, ry - 10, W - M, ry - 10), fill=LIGHT, width=2)
-    start = (tomorrow_idx + 1) if show_tomorrow else (tomorrow_idx or 1)
+    if tomorrow_idx is None:
+        start = len(days)
+    else:
+        start = tomorrow_idx + 1 if show_tomorrow else tomorrow_idx
     rows = days[start:start + 5]
     cw = (W - 2 * M) / 5
     f_day = font("InterDisplay-Bold", 36)
@@ -899,7 +926,9 @@ def render_message(text: str, until: datetime | None, now: datetime, data: dict 
     with a small weather line and the time it switches back underneath."""
     img = Image.new("L", (W, H), WHITE)
     d = ImageDraw.Draw(img)
-    text = " ".join(text.upper().split())[:120]
+    ok = set(" ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;!?'\"-–—+=/&%°()#@$*ÀÁÂÄÃÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÖÕØÙÚÛÜÝ")
+    text = "".join(ch for ch in text.upper() if ch in ok or ch.isspace())
+    text = " ".join(text.split())[:120]
     words = text.split(" ") if text else ["--"]
     box_w, box_h = W - 2 * M, H - 2 * M - 120
     best = None
@@ -927,7 +956,15 @@ def render_message(text: str, until: datetime | None, now: datetime, data: dict 
     else:                                                  # too long for tiles: plain big text
         f = font("InterDisplay-Bold", 64)
         lines, cur = [], ""
-        for w in words:
+        split = []
+        for w in words:                                    # break words wider than the box
+            while d.textlength(w, font=f) > box_w and len(w) > 1:
+                k = len(w)
+                while k > 1 and d.textlength(w[:k], font=f) > box_w:
+                    k -= 1
+                split.append(w[:k]); w = w[k:]
+            split.append(w)
+        for w in split:
             t = (cur + " " + w).strip()
             if d.textlength(t, font=f) <= box_w:
                 cur = t
@@ -972,7 +1009,7 @@ def active_message(path: str | None, now: datetime) -> dict | None:
     page): {"text": "...", "until": ISO time or null}. Empty text, or a past 'until', means
     weather."""
     try:
-        m = json.loads(Path(path).read_text()) if path and Path(path).is_file() else None
+        m = json.loads(Path(path).read_text(encoding="utf-8")) if path and Path(path).is_file() else None
     except Exception:  # noqa: BLE001
         return None
     if not m or not str(m.get("text") or "").strip():
@@ -990,7 +1027,7 @@ def active_message(path: str | None, now: datetime) -> dict | None:
 
 
 # ---------------------------------------------------------------- hourly departure-board show
-BOARD_COLS = 14
+BOARD_COLS = 15
 BOARD_DRUM = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:-°%"
 
 
@@ -1079,9 +1116,10 @@ def write_show(folder: Path, data: dict, now: datetime, active: bool) -> int:
     if not active:
         (folder / "show.txt").write_text("hour none\n")
         return 0
-    target = now.replace(minute=0, second=0, microsecond=0)
+    u = now.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
     if now.minute >= 30:
-        target += timedelta(hours=1)
+        u += timedelta(hours=1)                    # elapsed hours, so DST changeovers are right
+    target = u.astimezone(TZ)
     rows = board_rows(data, target)
     hour_id = target.astimezone(timezone.utc).strftime("%Y%m%d%H")
     frames = board_frames(rows, seed=int(hour_id))

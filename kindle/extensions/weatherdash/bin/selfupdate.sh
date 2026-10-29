@@ -19,7 +19,7 @@ while read -r sum path; do
   [ "$(md5sum "$N/$path" | cut -d' ' -f1)" = "$sum" ] || { echo "checksum mismatch: $path"; exit 1; }
   case "$path" in *.sh) sh -n "$N/$path" || { echo "syntax error: $path"; exit 1; } ;; esac
 done < "$N/manifest.txt"
-# install: keep a backup of the current code, then copy the new files over
+# install: keep a backup of the current code, then put each new file in place atomically
 rm -rf "$DIR/previous"; mkdir -p "$DIR/previous/bin"
 cp -f "$DIR"/bin/*.sh "$DIR/previous/bin/" 2>/dev/null
 cp -f "$DIR/config.sh" "$DIR/menu.json" "$DIR/previous/" 2>/dev/null
@@ -27,7 +27,8 @@ while read -r sum path; do
   [ "$sum" = "version" ] && continue
   [ -n "$path" ] || continue
   mkdir -p "$DIR/$(dirname "$path")"
-  cp -f "$N/$path" "$DIR/$path"
+  cp -f "$N/$path" "$DIR/$path.tmp" && mv -f "$DIR/$path.tmp" "$DIR/$path" \
+    || { echo "install failed at $path"; exit 1; }
 done < "$N/manifest.txt"
 echo "$ver" > "$DIR/code_version"
 rm -rf "$N"

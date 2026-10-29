@@ -15,3 +15,23 @@ landscape (1448×1072) with the charging port on the left.
 Local preview without network: `python render.py --sample --now 2026-10-30T14:00`
 
 Fonts: Inter (SIL Open Font License), see `fonts/LICENSE-Inter.txt`.
+
+## Messages from the iPhone
+
+`web/message.html` is published at `https://<owner>.github.io/kindle-weather/message.html`.
+Add it to the home screen. It needs a fine-grained token (only this repository, Contents:
+read and write), pasted into the page itself; it is stored only on the phone. Sending
+writes `message.json` here, which triggers a rebuild; the Kindle shows the message on
+flap tiles until the chosen time. The repository is public, so messages are too.
+
+## Every hour
+
+On the hour the Kindle plays a split-flap "departure board" (place and time, temperature,
+feels like) for about 20 seconds, prepared by the workflow in `show/`.
+
+## Setup notes
+
+- Repository Settings → Pages → Source must be **GitHub Actions**.
+- The Kindle updates its own scripts from `site/kindle/` (checked against `manifest.txt`)
+  every ten minutes, so changes under `kindle/extensions/weatherdash` reach it over wifi.
+
