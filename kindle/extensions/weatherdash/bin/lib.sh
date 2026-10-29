@@ -6,18 +6,28 @@ draw_full() {      # whole screen, flashing refresh (clears e-ink ghosting)
   "$FBINK" -q -c -f -g file="$1" 2>/dev/null || eips -f -g "$1"
 }
 
-play_frames() {    # $1 = folder holding anim.txt + frame PNGs; fast black/white partial updates
-  [ -s "$1/anim.txt" ] || return 1
-  while read -r name x y; do
-    [ "$name" = "id" ] && continue
-    [ -n "$y" ] || continue
+play_frames() {    # $1 = folder holding update.txt + frames; fast black/white partial updates
+  [ -s "$1/update.txt" ] || return 1
+  while read -r kind name x y rest; do
+    [ "$kind" = "frame" ] || continue
     "$FBINK" -q -W A2 -g file="$1/$name",x="$x",y="$y" 2>/dev/null || return 1
     usleep 40000 2>/dev/null
-  done < "$1/anim.txt"
+  done < "$1/update.txt"
 }
 
-msg() {            # one line of text near the bottom of the screen
-  "$FBINK" -q -m -y -3 "$1" 2>/dev/null || eips 2 38 "$1"
+draw_region() {    # file x y flash|calm : redraw one rectangle in place
+  if [ "$4" = "flash" ]; then
+    "$FBINK" -q -f -g file="$1",x="$2",y="$3" 2>/dev/null && return 0
+  else
+    "$FBINK" -q -W REAGL -g file="$1",x="$2",y="$3" 2>/dev/null && return 0
+    "$FBINK" -q -W GL16 -g file="$1",x="$2",y="$3" 2>/dev/null && return 0
+    "$FBINK" -q -g file="$1",x="$2",y="$3" 2>/dev/null && return 0
+  fi
+  eips -g "$1" -x "$2" -y "$3" >/dev/null 2>&1
+}
+
+banner() {         # offline.png | battery.png : pre-drawn notice over the header's right side
+  read -r bx by < "$DIR/banner.txt" && draw_region "$DIR/$1" "$bx" "$by" calm
 }
 
 get() {            # get URL FILE  (verified TLS, then unverified, then wget)

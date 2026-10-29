@@ -1,10 +1,12 @@
 # kindle-weather
 
-An always-on Hobart weather screen for a jailbroken Kindle Paperwhite (7th gen, 1072×1448).
+An always-on Hobart weather screen for a jailbroken Kindle Paperwhite (7th gen), used in
+landscape (1448×1072) with the charging port on the left.
 
 - `render.py` fetches the Bureau of Meteorology forecast and observations (falling back to
-  Open-Meteo for anything BOM doesn't return) and draws `dash.png`, plus split-flap
-  animation frames whenever the temperature or feels-like temperature changes.
+  Open-Meteo for anything BOM doesn't return) and draws `dash.png` (rotated for the Kindle),
+  `preview.png` (upright), and `delta/`: split-flap frames when the temperatures change and
+  the changed rectangles, so the Kindle redraws only what changed.
 - `.github/workflows/dash.yml` runs it every 15 minutes and publishes the result to GitHub
   Pages at `https://<owner>.github.io/kindle-weather/dash.png`.
 - `kindle/extensions/weatherdash` is the KUAL extension on the Kindle: it downloads the

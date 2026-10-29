@@ -27,8 +27,8 @@ from PIL import Image, ImageDraw, ImageFont
 PLACE = "Hobart"
 LAT, LON = -42.8821, 147.3272
 TZ = ZoneInfo("Australia/Hobart")
-W, H = 1072, 1448                     # Paperwhite 3 portrait, 300 ppi
-M = 60                                # outer margin
+W, H = 1448, 1072                     # drawn in landscape; rotated to the Kindle's 1072x1448 portrait
+M = 56                                # outer margin
 HERE = Path(__file__).resolve().parent
 FONTS = HERE / "fonts"
 UA = "Mozilla/5.0 (kindle-weather dashboard; personal use)"
@@ -615,76 +615,63 @@ def text_w(d, txt, f):
 
 
 def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.Image:
+    """Draw the dashboard in landscape (1448x1072), as the viewer sees it."""
     img = Image.new("L", (W, H), WHITE)
     d = ImageDraw.Draw(img)
 
-    f_place = font("InterDisplay-Bold", 62)
-    f_date = font("Inter-Medium", 34)
-    f_small = font("Inter-Regular", 28)
-    f_small_b = font("Inter-SemiBold", 28)
-    f_temp = font("InterDisplay-SemiBold", 220)
-    f_cond = font("InterDisplay-SemiBold", 46)
-    f_det = font("Inter-Regular", 33)
-    f_det_b = font("Inter-SemiBold", 33)
-    f_h2 = font("Inter-SemiBold", 30)
-    f_row = font("Inter-Medium", 36)
-    f_row_b = font("InterDisplay-Bold", 40)
-    f_row_s = font("Inter-Regular", 30)
-    f_axis = font("Inter-Medium", 25)
+    f_small = font("Inter-Regular", 27)
+    f_small_b = font("Inter-SemiBold", 27)
+    f_h2 = font("Inter-SemiBold", 27)
+    f_axis = font("Inter-Medium", 24)
 
     days = data.get("days") or []
     hourly = [h for h in (data.get("hourly") or []) if h["time"] and h["time"] > now][:24]
     now_obs = data.get("now") or {}
     today = next((x for x in days if x["date"] == now.date()), days[0] if days else {})
     tomorrow_idx = next((i for i, x in enumerate(days) if x["date"] > now.date()), None)
-
-    # is it night? use today's sunrise/sunset when known
     sr, ss = today.get("sunrise"), today.get("sunset")
     night = bool(sr and ss and not (sr <= now <= ss))
 
     # ---- header
-    y = 52
-    d.text((M, y), PLACE, font=f_place, fill=BLACK)
-    d.text((M, y + 78), now.strftime("%A %-d %B"), font=f_date, fill=MID)
-    upd = f"Updated {fmt_time(updated or now)}"
-    d.text((W - M - text_w(d, upd, f_small), y + 22), upd, font=f_small, fill=MID)
+    d.text((M, 34), PLACE, font=font("InterDisplay-Bold", 56), fill=BLACK)
+    d.text((M + 236, 52), now.strftime("%A %-d %B"), font=font("Inter-Medium", 34), fill=MID)
+    src = " + ".join(sorted(data.get("sources") or []))
+    right = f"Updated {fmt_time(updated or now)}" + (f" · {src}" if src else "")
     if sr and ss:
-        sun = f"↑ {fmt_time(sr)}   ↓ {fmt_time(ss)}"
-        d.text((W - M - text_w(d, sun, f_small), y + 84), sun, font=f_small, fill=MID)
+        right = f"↑ {fmt_time(sr)}   ↓ {fmt_time(ss)}      " + right
+    d.text((W - M - text_w(d, right, f_small), 56), right, font=f_small, fill=MID)
 
-    # ---- hero: icon | temperature | feels like  (equal weight)
-    hero_y = 188
+    # ---- hero: icon | temperature | feels like
     global HERO_BOX
-    HERO_BOX = (M + 270, hero_y, W - M, hero_y + 182)
+    hy = 140
     h0 = hourly[0] if hourly else {}
     icon_now = now_obs.get("icon") or h0.get("icon") or today.get("icon")
-    draw_icon(img, icon_now, (M + 12, hero_y + 2, M + 212, hero_y + 182), night=night)
+    draw_icon(img, icon_now, (M + 6, hy + 4, M + 216, hy + 214), night=night)
     cond = NOW_TEXT.get((icon_now or "").lower(), "")
     if night and cond in ("Sunny", "Mostly sunny"):
         cond = {"Sunny": "Clear", "Mostly sunny": "Mostly clear"}[cond]
     f_cond = font("InterDisplay-SemiBold", 36)
-    d.text((M + 112 - text_w(d, cond, f_cond) / 2, hero_y + 180), cond, font=f_cond, fill=BLACK)
+    d.text((M + 111 - text_w(d, cond, f_cond) / 2, hy + 222), cond, font=f_cond, fill=BLACK)
 
     t_now = now_obs.get("temp") if now_obs.get("temp") is not None else h0.get("temp")
     f_now = now_obs.get("feels") if now_obs.get("feels") is not None else h0.get("feels")
-    col_w = (W - M - (M + 270)) // 2
-    for ci, (val, lab) in enumerate(((t_now, "TEMPERATURE"), (f_now, "FEELS LIKE"))):
-        cx0 = M + 270 + ci * col_w
+    cols = ((t_now, "TEMPERATURE", "temp", 300), (f_now, "FEELS LIKE", "feels", 860))
+    HERO_BOX = (290, hy, W - M, hy + 236)
+    for val, lab, key, cx0 in cols:
         if FLAP:
-            key = "temp" if ci == 0 else "feels"
             specs = (TILE_OVERRIDE or {}).get(key) or list(tile_text(val, 1))
-            draw_flap_number(img, specs, cx0 + 8, hero_y + 6)
+            draw_flap_number(img, specs, cx0, hy + 6, tile_w=126, tile_h=214)
         else:
-            d.text((cx0, hero_y - 22), deg(val), font=font("InterDisplay-SemiBold", 190), fill=BLACK)
-        d.text((cx0 + 8, hero_y + 184), lab, font=font("Inter-SemiBold", 30), fill=MID)
+            d.text((cx0, hy - 30), deg(val), font=font("InterDisplay-SemiBold", 250), fill=BLACK)
+        d.text((cx0 + 4, hy + 236), lab, font=font("Inter-SemiBold", 28), fill=MID)
 
-    # ---- stats strip: wind | humidity | rain since 9am
-    sy0 = 452
-    d.line((M, sy0 - 22, W - M, sy0 - 22), fill=LIGHT, width=2)
-    f_lab = font("Inter-SemiBold", 26)
+    # ---- stats (left) + day panel (right)
+    sy = 446
+    d.line((M, sy - 22, W - M, sy - 22), fill=LIGHT, width=2)
+    f_lab = font("Inter-SemiBold", 25)
     f_val = font("InterDisplay-Bold", 56)
-    f_unit = font("Inter-Medium", 30)
-    f_sub = font("Inter-Regular", 28)
+    f_unit = font("Inter-Medium", 29)
+    f_sub = font("Inter-Regular", 26)
     stats = []
     if now_obs.get("wind_kmh") is not None:
         stats.append(("WIND", f"{now_obs.get('wind_dir') or ''} {round(now_obs['wind_kmh'])}".strip(), " km/h",
@@ -693,31 +680,34 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
         stats.append(("HUMIDITY", f"{round(now_obs['humidity'])}", "%", ""))
     if now_obs.get("rain_since_9am") is not None:
         stats.append(("RAIN SINCE 9AM", f"{now_obs['rain_since_9am']:g}", " mm", ""))
-    elif pday_preview := (today.get("rain_chance")):
-        stats.append(("RAIN CHANCE", f"{pday_preview}", "%", "today"))
+    elif today.get("rain_chance") is not None:
+        stats.append(("RAIN CHANCE", f"{today['rain_chance']}", "%", "today"))
+    sx0, sx1 = M, 846
     if stats:
-        sw = (W - 2 * M) / len(stats)
+        sw = (sx1 - sx0) / len(stats)
         for i, (lab, val, unit, sub) in enumerate(stats):
-            x0 = M + i * sw + (0 if i == 0 else 28)
+            x0 = sx0 + i * sw + (0 if i == 0 else 26)
             if i:
-                d.line((M + i * sw, sy0, M + i * sw, sy0 + 108), fill=LIGHT, width=2)
-            d.text((x0, sy0), lab, font=f_lab, fill=MID)
-            d.text((x0, sy0 + 30), val, font=f_val, fill=BLACK)
-            d.text((x0 + text_w(d, val, f_val) + 2, sy0 + 52), unit, font=f_unit, fill=DARK)
+                d.line((sx0 + i * sw, sy, sx0 + i * sw, sy + 116), fill=LIGHT, width=2)
+            d.text((x0, sy), lab, font=f_lab, fill=MID)
+            d.text((x0, sy + 28), val, font=f_val, fill=BLACK)
+            d.text((x0 + text_w(d, val, f_val) + 2, sy + 50), unit, font=f_unit, fill=DARK)
             if sub:
-                d.text((x0, sy0 + 98), sub, font=f_sub, fill=MID)
+                d.text((x0, sy + 94), sub, font=f_sub, fill=MID)
 
-    # ---- day summary panel (today, or tomorrow once it's evening)
-    py0, py1 = 598, 718
     show_tomorrow = now.hour >= 18 and tomorrow_idx is not None
     pday = days[tomorrow_idx] if show_tomorrow else today
-    d.rounded_rectangle((M, py0, W - M, py1), radius=22, fill=PALE)
-    label = "Tomorrow" if show_tomorrow else "Today"
-    d.text((M + 32, py0 + 14), label.upper(), font=f_h2, fill=MID)
-    hi_lo = f"{deg(pday.get('min'))}  –  {deg(pday.get('max'))}"
-    d.text((M + 32, py0 + 46), hi_lo, font=font("InterDisplay-Bold", 56), fill=BLACK)
-    rx = M + 380
-    d.text((rx, py0 + 16), (pday.get("text") or "").rstrip("."), font=f_row, fill=BLACK)
+    px0, py0, px1, py1 = 876, sy - 6, W - M, sy + 124
+    d.rounded_rectangle((px0, py0, px1, py1), radius=22, fill=PALE)
+    d.text((px0 + 28, py0 + 14), ("Tomorrow" if show_tomorrow else "Today").upper(), font=f_h2, fill=MID)
+    d.text((px0 + 28, py0 + 48), f"{deg(pday.get('min'))} – {deg(pday.get('max'))}",
+           font=font("InterDisplay-Bold", 54), fill=BLACK)
+    tx = px0 + 250
+    text = (pday.get("text") or "").rstrip(".")
+    f_pt = font("Inter-Medium", 32)
+    while text and text_w(d, text, f_pt) > px1 - tx - 20:
+        text = text[:-2].rstrip() + "…"
+    d.text((tx, py0 + 18), text, font=f_pt, fill=BLACK)
     bits = []
     if pday.get("rain_chance") is not None:
         r = f"{pday['rain_chance']}% rain"
@@ -727,19 +717,20 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
         bits.append(r)
     if pday.get("uv") is not None:
         bits.append(f"UV {round(pday['uv'])} {uv_word(pday['uv']).lower()}")
-    d.text((rx, py0 + 68), " · ".join(bits), font=f_row_s, fill=DARK)
+    f_pb = font("Inter-Regular", 27)
+    d.text((tx, py0 + 62), bits[0] if bits else "", font=f_pb, fill=DARK)
+    if len(bits) > 1:
+        d.text((tx, py0 + 94), bits[1], font=f_pb, fill=DARK)
 
-    # ---- hourly chart: temperature (solid) + feels like (dashed) + rain chance bars
-    cy0 = 736
+    # ---- 24-hour chart
+    cy0 = 596
     d.text((M, cy0), "NEXT 24 HOURS", font=f_h2, fill=MID)
-    # legend
     lx = W - M
     for name, kind in (("Rain chance", "bar"), ("Feels like", "dash"), ("Temp", "solid")):
-        tw = text_w(d, name, f_axis)
-        lx -= tw
-        d.text((lx, cy0 + 4), name, font=f_axis, fill=DARK)
+        lx -= text_w(d, name, f_axis)
+        d.text((lx, cy0 + 2), name, font=f_axis, fill=DARK)
         lx -= 50
-        ly = cy0 + 20
+        ly = cy0 + 17
         if kind == "solid":
             d.line((lx, ly, lx + 38, ly), fill=BLACK, width=6)
         elif kind == "dash":
@@ -748,10 +739,11 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
         else:
             d.rectangle((lx + 10, ly - 13, lx + 28, ly + 11), fill=PALE)
             d.rectangle((lx + 10, ly - 2, lx + 28, ly + 11), fill=DARK)
-        lx -= 26
-    gx0, gx1 = M + 6, W - M - 6
-    gt0, gt1 = cy0 + 90, cy0 + 186          # temperature band
-    gr0, gr1 = cy0 + 270, cy0 + 330         # rain-chance band (0-100%)
+        lx -= 30
+    gx0, gx1 = M + 8, W - M - 8
+    gt0, gt1 = cy0 + 84, cy0 + 170          # temperature band
+    gr0, gr1 = cy0 + 240, cy0 + 286         # rain-chance band
+    every = 2
     if len(hourly) >= 2:
         vals = [v for h in hourly for v in (h.get("temp"), h.get("feels")) if v is not None]
         tmin, tmax = math.floor(min(vals)), math.ceil(max(vals))
@@ -768,25 +760,18 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
         for i, h in enumerate(hourly):          # night shading
             if h.get("is_night"):
                 xa = xs[i] - step / 2
-                d.rectangle((max(gx0, xa), gt0 - 44, min(gx1, xa + step), gt1 + 40), fill=PALE)
-        # rain chance: one pale 0-100% track per hour, filled to the chance; % row above
-        f_pct = font("Inter-SemiBold", 25)
+                d.rectangle((max(gx0 - 8, xa), gt0 - 44, min(gx1 + 8, xa + step), gt1 + 40), fill=PALE)
+        f_pct = font("Inter-SemiBold", 24)
         bw = max(6, step * 0.6)
-        for i, h in enumerate(hourly):
+        for i, h in enumerate(hourly):          # rain tracks + fill
             rc = max(0, min(100, h.get("rain_chance") or 0))
             d.rectangle((xs[i] - bw / 2, gr0, xs[i] + bw / 2, gr1), fill=PALE)
             if rc > 0:
                 d.rectangle((xs[i] - bw / 2, gr1 - max(3, (gr1 - gr0) * rc / 100), xs[i] + bw / 2, gr1), fill=DARK)
-        for i, h in enumerate(hourly):
-            if i % 3 or h.get("rain_chance") is None:
-                continue
-            rc = round(h["rain_chance"])
-            lab = f"{rc}%"
-            lw_ = text_w(d, lab, f_pct)
-            xl = min(max(xs[i] - lw_ / 2, gx0 - 6), gx1 - lw_ + 6)
-            d.text((xl, gr0 - 34), lab, font=f_pct, fill=BLACK if rc >= 30 else MID)
+
         k = 3                                   # lines, supersampled
         LW, LH = gx1 - gx0 + 40, gt1 - gt0 + 100
+
         def series(key):
             return [((x - gx0 + 20) * k, (ty(h[key]) - gt0 + 50) * k)
                     for x, h in zip(xs, hourly) if h.get(key) is not None]
@@ -808,59 +793,78 @@ def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.
                     acc += run
                     if acc >= (dash if on else gap) - 1e-6:
                         acc, on = 0.0, not on
-            fl = fl.resize((LW, LH), Image.LANCZOS)
-            img.paste(DARK, (gx0 - 20, gt0 - 50), fl)
+            img.paste(DARK, (gx0 - 20, gt0 - 50), fl.resize((LW, LH), Image.LANCZOS))
         if len(temp_pts) >= 2:
             tl = Image.new("L", (LW * k, LH * k), 0)
-            td = ImageDraw.Draw(tl)
-            td.line(temp_pts, fill=255, width=7 * k, joint="curve")
-            tl = tl.resize((LW, LH), Image.LANCZOS)
-            img.paste(BLACK, (gx0 - 20, gt0 - 50), tl)
+            ImageDraw.Draw(tl).line(temp_pts, fill=255, width=7 * k, joint="curve")
+            img.paste(BLACK, (gx0 - 20, gt0 - 50), tl.resize((LW, LH), Image.LANCZOS))
 
-        for i, h in enumerate(hourly):          # labels every 3 hours
-            if i % 3:
+        for i, h in enumerate(hourly):          # labels every 2 hours
+            if i % every:
                 continue
             t, fe = h.get("temp"), h.get("feels")
             if t is not None:
                 above = fe is None or t >= fe
                 lab = deg(t)
                 lw_ = text_w(d, lab, f_small_b)
-                d.text((xs[i] - lw_ / 2, ty(t) - 44 if above else ty(t) + 10), lab, font=f_small_b, fill=BLACK)
+                d.text((xs[i] - lw_ / 2, ty(t) - 42 if above else ty(t) + 10), lab, font=f_small_b, fill=BLACK)
             if fe is not None and round(fe) != round(t if t is not None else -99):
                 lab = deg(fe)
                 lw_ = text_w(d, lab, f_small)
                 below = t is None or fe < t
-                d.text((xs[i] - lw_ / 2, ty(fe) + 8 if below else ty(fe) - 42), lab, font=f_small, fill=MID)
+                d.text((xs[i] - lw_ / 2, ty(fe) + 8 if below else ty(fe) - 40), lab, font=f_small, fill=MID)
+            rc = h.get("rain_chance")
+            if rc is not None:
+                lab = f"{round(rc)}%"
+                lw_ = text_w(d, lab, f_pct)
+                d.text((min(max(xs[i] - lw_ / 2, gx0 - 6), gx1 - lw_ + 6), gr0 - 32), lab, font=f_pct,
+                       fill=BLACK if rc >= 30 else MID)
             lab = fmt_hour(h["time"])
             lw_ = text_w(d, lab, f_axis)
-            d.text((min(max(xs[i] - lw_ / 2, gx0 - 6), gx1 - lw_ + 6), gr1 + 10), lab, font=f_axis, fill=MID)
+            d.text((min(max(xs[i] - lw_ / 2, gx0 - 6), gx1 - lw_ + 6), gr1 + 8), lab, font=f_axis, fill=MID)
 
-    # ---- next days
-    ry = 1130
-    d.line((M, ry - 18, W - M, ry - 18), fill=LIGHT, width=2)
+    # ---- next five days, as columns
+    ry = 938
+    d.line((M, ry - 10, W - M, ry - 10), fill=LIGHT, width=2)
     start = (tomorrow_idx + 1) if show_tomorrow else (tomorrow_idx or 1)
-    rows = [x for x in days[start:start + 5]]
-    row_h = 54
+    rows = days[start:start + 5]
+    cw = (W - 2 * M) / 5
+    f_day = font("InterDisplay-Bold", 36)
+    f_hi = font("InterDisplay-Bold", 36)
+    f_lo = font("Inter-Medium", 32)
+    f_txt = font("Inter-Regular", 24)
     for i, day in enumerate(rows):
-        y0 = ry + i * row_h
-        d.text((M, y0 + 4), day["date"].strftime("%a"), font=f_row_b, fill=BLACK)
-        draw_icon(img, day.get("icon"), (M + 104, y0 - 2, M + 154, y0 + 48))
-        d.text((M + 178, y0 + 8), (day.get("text") or "").rstrip("."), font=f_row_s, fill=DARK)
+        x0 = M + i * cw + (0 if i == 0 else 22)
+        if i:
+            d.line((M + i * cw, ry, M + i * cw, ry + 122), fill=LIGHT, width=2)
+        d.text((x0, ry), day["date"].strftime("%a"), font=f_day, fill=BLACK)
+        hi, lo = deg(day.get("max")), deg(day.get("min"))
+        xr = M + (i + 1) * cw - 18
+        d.text((xr - text_w(d, hi, f_hi), ry), hi, font=f_hi, fill=BLACK)
+        d.text((xr - text_w(d, hi, f_hi) - 14 - text_w(d, lo, f_lo), ry + 3), lo, font=f_lo, fill=MID)
+        draw_icon(img, day.get("icon"), (x0 - 2, ry + 44, x0 + 44, ry + 90))
         rc = day.get("rain_chance")
         if rc is not None:
-            rtxt = f"{rc}%"
-            d.text((W - M - 290 - text_w(d, rtxt, f_row_s), y0 + 8), rtxt, font=f_row_s,
+            d.text((x0 + 56, ry + 52), f"{rc}% rain", font=font("Inter-SemiBold", 25),
                    fill=BLACK if rc >= 50 else MID)
-        lo, hi = deg(day.get("min")), deg(day.get("max"))
-        d.text((W - M - 230, y0 + 4), lo, font=f_row, fill=MID)
-        d.text((W - M - text_w(d, hi, f_row_b), y0 + 2), hi, font=f_row_b, fill=BLACK)
+        line = (day.get("text") or "").rstrip(".")
+        while line and text_w(d, line, f_txt) > cw - 40:
+            line = line[:-2].rstrip() + "…"
+        d.text((x0, ry + 96), line, font=f_txt, fill=DARK)
 
-    # ---- footer
-    src = " + ".join(sorted(data.get("sources") or []))
-    station = now_obs.get("station")
-    foot = f"{src}" + (f" · obs {station}" if station else "")
-    d.text((M, H - 36), foot, font=font("Inter-Regular", 22), fill=LIGHT)
     return img
+
+
+def to_device(img: Image.Image) -> Image.Image:
+    """Landscape picture -> the Kindle's native portrait framebuffer, for a Kindle lying on
+    its side with the charging port on the LEFT (picture turned a quarter turn anticlockwise)."""
+    return img.transpose(Image.ROTATE_90)
+
+
+def box_to_device(b):
+    """A landscape rectangle (x0, y0, x1, y1) -> the same area in device coordinates."""
+    x0, y0, x1, y1 = b
+    return (y0, W - x1, y1, W - x0)
 
 
 def hero_values(data: dict, now: datetime):
@@ -919,13 +923,15 @@ def main():
         except ValueError:
             prev_updated = None
     updated = now
-    img = render(data, now, updated)
+    land = render(data, now, updated)
+    img = to_device(land)
     if prev_img is not None and prev_updated and prev_updated.date() == now.date():
-        same = render(data, now, prev_updated)
-        if changed_regions(prev_img, same) == []:
-            img, updated = same, prev_updated
-    hero_box = HERO_BOX
+        same_land = render(data, now, prev_updated)
+        if changed_regions(prev_img, to_device(same_land)) == []:
+            land, img, updated = same_land, to_device(same_land), prev_updated
+    hero_box = box_to_device(HERO_BOX)
     img.save(out, optimize=True)
+    land.save(out.parent / "preview.png", optimize=True)          # upright copy for browsers
     if prev_img is not None and updated is prev_updated:
         out.write_bytes(Path(a.prev_image).read_bytes())          # byte-identical: Kindle does nothing
     digest = hashlib.md5(out.read_bytes()).hexdigest()
@@ -958,7 +964,7 @@ def main():
         for i in range(n):
             TILE_OVERRIDE = {"temp": ft[i] if i < len(ft) else list(state["temp"]),
                              "feels": ff[i] if i < len(ff) else list(state["feels"])}
-            render(data, now, updated).crop(hero_box).save(delta / f"f{i:02d}.png", optimize=True)
+            to_device(render(data, now, updated)).crop(hero_box).save(delta / f"f{i:02d}.png", optimize=True)
             lines.append(f"frame f{i:02d}.png {hero_box[0]} {hero_box[1]}")
             frames += 1
         TILE_OVERRIDE = None
