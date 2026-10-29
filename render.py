@@ -453,15 +453,23 @@ HERO_BOX = (0, 0, W, H)             # filled in by render(): region the flip ani
 DRUM = " -0123456789"               # order of characters on each flap drum
 
 
-def tile_text(value) -> str:
-    """Characters shown on the tiles: at least two tiles, blank-padded on the left."""
-    return ("--" if value is None else str(round(value))).rjust(2)
+def tile_text(value, decimals: int = 0) -> str:
+    """Characters shown on the tiles: at least two whole-number tiles, blank-padded on the
+    left, optionally followed by '.' and one tenths tile (e.g. '12.4', ' 9.0', '-1.5')."""
+    if value is None:
+        return "--.-" if decimals else "--"
+    if decimals:
+        whole, frac = f"{value:.1f}".split(".")
+        if whole == "-0":
+            whole = "-0"
+        return whole.rjust(2) + "." + frac
+    return str(round(value)).rjust(2)
 
 
 def _tile(ch: str, tile_w: int, tile_h: int) -> Image.Image:
     t = Image.new("L", (tile_w, tile_h), WHITE)
     d = ImageDraw.Draw(t)
-    rad = int(tile_w * 0.1)
+    rad = max(6, int(tile_w * 0.1))
     mid = tile_h // 2
     d.rounded_rectangle((0, 0, tile_w - 1, tile_h - 1), radius=rad, fill=40)          # lower flap
     d.rounded_rectangle((0, 0, tile_w - 1, mid), radius=rad, fill=62)                 # upper flap
@@ -472,44 +480,70 @@ def _tile(ch: str, tile_w: int, tile_h: int) -> Image.Image:
         bb = d.textbbox((0, 0), ch, font=f)
         d.text(((tile_w - cw) / 2, (tile_h - (bb[3] - bb[1])) / 2 - bb[1]), ch, font=f, fill=WHITE)
     d.line((0, mid, tile_w, mid), fill=WHITE, width=3)                                # the split
-    for hx in (5, tile_w - 11):                                                       # hinge notches
-        d.rectangle((hx, mid - 7, hx + 6, mid + 7), fill=WHITE)
+    nw = max(4, tile_w // 16)
+    for hx in (5, tile_w - 5 - nw):                                                   # hinge notches
+        d.rectangle((hx, mid - 7, hx + nw, mid + 7), fill=WHITE)
     return t
 
 
-def draw_flap_number(img, specs, x, y, tile_w=100, tile_h=168):
+def draw_flap_number(img, specs, x, y, tile_w=92, tile_h=156):
     """Draw tiles. Each spec is a character, or (top, bottom) for a tile caught mid-flip:
-    the upper half already shows the next character, the lower half still the old one."""
+    the upper half already shows the next character, the lower half still the old one.
+    A '.' spec draws a decimal point; tiles after it are smaller (the tenths)."""
     d = ImageDraw.Draw(img)
     gap = int(tile_w * 0.08)
-    mid = tile_h // 2
-    for i, spec in enumerate(specs):
-        x0 = x + i * (tile_w + gap)
+    cx = x
+    tw, th, ty = tile_w, tile_h, y
+    for spec in specs:
+        if spec == ".":
+            r = int(tile_h * 0.05)
+            d.ellipse((cx + 2, y + tile_h - 2 * r - 2, cx + 2 + 2 * r, y + tile_h - 2), fill=BLACK)
+            cx += 2 * r + 10
+            tw, th = int(tile_w * 0.68), int(tile_h * 0.68)
+            ty = y + tile_h - th
+            continue
+        mid = th // 2
         if isinstance(spec, tuple):
-            top, bottom = _tile(spec[0], tile_w, tile_h), _tile(spec[1], tile_w, tile_h)
-            img.paste(top.crop((0, 0, tile_w, mid)), (x0, y))
-            img.paste(bottom.crop((0, mid, tile_w, tile_h)), (x0, y + mid))
-            d.line((x0, y + mid, x0 + tile_w, y + mid), fill=WHITE, width=3)
+            top, bottom = _tile(spec[0], tw, th), _tile(spec[1], tw, th)
+            img.paste(top.crop((0, 0, tw, mid)), (cx, ty))
+            img.paste(bottom.crop((0, mid, tw, th)), (cx, ty + mid))
+            d.line((cx, ty + mid, cx + tw, ty + mid), fill=WHITE, width=3)
         else:
-            img.paste(_tile(spec, tile_w, tile_h), (x0, y))
-    dx = x + len(specs) * (tile_w + gap) + 4
+            img.paste(_tile(spec, tw, th), (cx, ty))
+        cx += tw + gap
     r = tile_h * 0.085
-    d.ellipse((dx, y + 4, dx + 2 * r, y + 4 + 2 * r), outline=BLACK, width=max(4, int(r * 0.42)))
+    d.ellipse((cx + 2, y + 4, cx + 2 + 2 * r, y + 4 + 2 * r), outline=BLACK, width=max(4, int(r * 0.42)))
+
+
+def _align(old: str, new: str) -> tuple[str, str]:
+    """Make two tile strings line up (same length, decimal point in the same place)."""
+    if "." in new and "." not in old:
+        old = old.strip().rjust(2) + ".0"
+    if "." in old and "." not in new:
+        old = old.split(".")[0].rjust(2)
+    n = max(len(old), len(new))
+    return old.rjust(n), new.rjust(n)
 
 
 def flip_frames(old: str, new: str, max_steps: int = 6) -> list[list]:
     """Tile specs for each animation frame taking `old` to `new` (strings of tile characters).
     Each tile rolls forward round its drum (capped at max_steps flips); every flip is two
-    frames: mid-flip (top new / bottom old), then settled."""
-    n = max(len(old), len(new))
-    old, new = old.rjust(n), new.rjust(n)
+    frames: mid-flip (top new / bottom old), then settled. Decimal points never move."""
+    old, new = _align(old, new)
+    n = len(new)
     paths = []
     for a, b in zip(old, new):
+        if a == "." or b == ".":
+            paths.append([])
+            continue
         ia, ib = DRUM.index(a) if a in DRUM else 0, DRUM.index(b) if b in DRUM else 0
         dist = (ib - ia) % len(DRUM)
         steps = min(dist, max_steps)
         paths.append([DRUM[(ib - steps + k + 1) % len(DRUM)] for k in range(steps)])
     frames, cur = [], list(old)
+    for i, ch in enumerate(new):
+        if ch == ".":
+            cur[i] = "."
     for step in range(max((len(p) for p in paths), default=0)):
         nxt = [p[step] if step < len(p) else cur[i] for i, p in enumerate(paths)]
         frames.append([(nxt[i], cur[i]) if nxt[i] != cur[i] else cur[i] for i in range(n)])
@@ -518,12 +552,69 @@ def flip_frames(old: str, new: str, max_steps: int = 6) -> list[list]:
     return frames
 
 
+# ---------------------------------------------------------------- partial refresh
+def changed_regions(prev: Image.Image, new: Image.Image, cell: int = 16, pad: int = 6,
+                    max_regions: int = 10, max_fraction: float = 0.55):
+    """Rectangles (x0, y0, x1, y1) covering every pixel that differs between two screens,
+    merged so nearby changes share a box. None means 'just redraw the whole screen'."""
+    import numpy as np
+    if prev.size != new.size:
+        return None
+    a = np.asarray(prev.convert("L"), dtype=np.int16)
+    b = np.asarray(new.convert("L"), dtype=np.int16)
+    diff = np.abs(a - b) > 10
+    if not diff.any():
+        return []
+    h, w = diff.shape
+    gh, gw = -(-h // cell), -(-w // cell)
+    padded = np.zeros((gh * cell, gw * cell), dtype=bool)
+    padded[:h, :w] = diff
+    grid = padded.reshape(gh, cell, gw, cell).any(axis=(1, 3))
+    boxes, seen = [], np.zeros_like(grid)
+    for gy, gx in zip(*np.nonzero(grid)):                      # connected cell clusters
+        if seen[gy, gx]:
+            continue
+        stack, (y0, x0, y1, x1) = [(gy, gx)], (gy, gx, gy, gx)
+        seen[gy, gx] = True
+        while stack:
+            cy, cx = stack.pop()
+            y0, x0, y1, x1 = min(y0, cy), min(x0, cx), max(y1, cy), max(x1, cx)
+            for ny in range(cy - 1, cy + 2):
+                for nx in range(cx - 1, cx + 2):
+                    if 0 <= ny < gh and 0 <= nx < gw and grid[ny, nx] and not seen[ny, nx]:
+                        seen[ny, nx] = True
+                        stack.append((ny, nx))
+        boxes.append([x0 * cell - pad, y0 * cell - pad, (x1 + 1) * cell + pad, (y1 + 1) * cell + pad])
+    merged = True                                                # merge boxes that touch or nearly touch
+    while merged:
+        merged = False
+        for i in range(len(boxes)):
+            for j in range(i + 1, len(boxes)):
+                p, q = boxes[i], boxes[j]
+                if p[0] <= q[2] + 24 and q[0] <= p[2] + 24 and p[1] <= q[3] + 24 and q[1] <= p[3] + 24:
+                    boxes[i] = [min(p[0], q[0]), min(p[1], q[1]), max(p[2], q[2]), max(p[3], q[3])]
+                    del boxes[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    boxes = [(max(0, x0), max(0, y0), min(w, x1), min(h, y1)) for x0, y0, x1, y1 in boxes]
+    area = sum((x1 - x0) * (y1 - y0) for x0, y0, x1, y1 in boxes)
+    if len(boxes) > max_regions or area > max_fraction * w * h:
+        return None
+    return boxes
+
+
+def overlaps(p, q) -> bool:
+    return p[0] < q[2] and q[0] < p[2] and p[1] < q[3] and q[1] < p[3]
+
+
 # ---------------------------------------------------------------- render
 def text_w(d, txt, f):
     return d.textlength(txt, font=f)
 
 
-def render(data: dict, now: datetime) -> Image.Image:
+def render(data: dict, now: datetime, updated: datetime | None = None) -> Image.Image:
     img = Image.new("L", (W, H), WHITE)
     d = ImageDraw.Draw(img)
 
@@ -555,7 +646,7 @@ def render(data: dict, now: datetime) -> Image.Image:
     y = 52
     d.text((M, y), PLACE, font=f_place, fill=BLACK)
     d.text((M, y + 78), now.strftime("%A %-d %B"), font=f_date, fill=MID)
-    upd = f"Updated {fmt_time(now)}"
+    upd = f"Updated {fmt_time(updated or now)}"
     d.text((W - M - text_w(d, upd, f_small), y + 22), upd, font=f_small, fill=MID)
     if sr and ss:
         sun = f"↑ {fmt_time(sr)}   ↓ {fmt_time(ss)}"
@@ -581,7 +672,7 @@ def render(data: dict, now: datetime) -> Image.Image:
         cx0 = M + 270 + ci * col_w
         if FLAP:
             key = "temp" if ci == 0 else "feels"
-            specs = (TILE_OVERRIDE or {}).get(key) or list(tile_text(val))
+            specs = (TILE_OVERRIDE or {}).get(key) or list(tile_text(val, 1))
             draw_flap_number(img, specs, cx0 + 8, hero_y + 6)
         else:
             d.text((cx0, hero_y - 22), deg(val), font=font("InterDisplay-SemiBold", 190), fill=BLACK)
@@ -783,15 +874,16 @@ def hero_values(data: dict, now: datetime):
 
 def main():
     import hashlib
+    global FLAP, TILE_OVERRIDE
     ap = argparse.ArgumentParser()
     ap.add_argument("--sample", action="store_true", help="use built-in sample data")
     ap.add_argument("--out", default=str(HERE / "out" / "dash.png"))
     ap.add_argument("--now", help="pretend local time, e.g. 2026-10-30T14:00")
     ap.add_argument("--plain", action="store_true", help="plain numbers instead of split-flap tiles")
     ap.add_argument("--prev", help="previous state.json (to animate from)")
-    ap.add_argument("--fake-prev", help="pretend previous tiles, e.g. '9,7' (testing)")
+    ap.add_argument("--fake-prev", help="pretend previous tiles, e.g. '11.6,9' (testing)")
+    ap.add_argument("--prev-image", help="previous dash.png (for partial refresh)")
     a = ap.parse_args()
-    global FLAP, TILE_OVERRIDE
     FLAP = not a.plain
     now = datetime.now(TZ)
     if a.now:
@@ -800,49 +892,90 @@ def main():
 
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    img = render(data, now)
-    img.save(out, optimize=True)
-    digest = hashlib.md5(out.read_bytes()).hexdigest()
 
-    t, f = hero_values(data, now)
-    state = {"temp": tile_text(t), "feels": tile_text(f), "generated": now.isoformat()}
-    (out.parent / "state.json").write_text(json.dumps(state))
-    (out.parent / "status.json").write_text(json.dumps({
-        "generated": now.isoformat(), "sources": sorted(data["sources"]), "warnings": WARNINGS,
-        "now": {k: v for k, v in (data.get("now") or {}).items() if isinstance(v, (int, float, str)) or v is None},
-        "today": {k: str(v) for k, v in (data.get("days") or [{}])[0].items()},
-    }, indent=1))
-
-    # flip animation: frames of the tile area going from the previous reading to this one
     prev = None
     if a.fake_prev:
         pt, pf = a.fake_prev.split(",")
-        prev = {"temp": pt.rjust(2), "feels": pf.rjust(2)}
+        prev = {"temp": pt, "feels": pf.rjust(2)}
     elif a.prev and Path(a.prev).is_file():
         try:
             prev = json.loads(Path(a.prev).read_text())
         except Exception:  # noqa: BLE001
             prev = None
-    anim_dir = out.parent / "anim"
-    anim_dir.mkdir(exist_ok=True)
-    for old in anim_dir.glob("f*.png"):
+    prev_img, prev_digest = None, None
+    if a.prev_image and Path(a.prev_image).is_file():
+        try:
+            raw = Path(a.prev_image).read_bytes()
+            prev_digest = hashlib.md5(raw).hexdigest()
+            prev_img = Image.open(Path(a.prev_image)).convert("L")
+        except Exception:  # noqa: BLE001
+            prev_img, prev_digest = None, None
+
+    # "Updated" only moves when something on screen changes: try the previous time first
+    prev_updated = None
+    if prev and prev.get("updated"):
+        try:
+            prev_updated = datetime.fromisoformat(prev["updated"])
+        except ValueError:
+            prev_updated = None
+    updated = now
+    img = render(data, now, updated)
+    if prev_img is not None and prev_updated and prev_updated.date() == now.date():
+        same = render(data, now, prev_updated)
+        if changed_regions(prev_img, same) == []:
+            img, updated = same, prev_updated
+    hero_box = HERO_BOX
+    img.save(out, optimize=True)
+    if prev_img is not None and updated is prev_updated:
+        out.write_bytes(Path(a.prev_image).read_bytes())          # byte-identical: Kindle does nothing
+    digest = hashlib.md5(out.read_bytes()).hexdigest()
+
+    t, f = hero_values(data, now)
+    state = {"temp": tile_text(t, 1), "feels": tile_text(f, 1), "generated": now.isoformat(),
+             "updated": updated.isoformat()}
+    (out.parent / "state.json").write_text(json.dumps(state))
+    (out.parent / "status.json").write_text(json.dumps({
+        "generated": now.isoformat(), "updated": updated.isoformat(),
+        "sources": sorted(data["sources"]), "warnings": WARNINGS,
+        "now": {k: v for k, v in (data.get("now") or {}).items() if isinstance(v, (int, float, str)) or v is None},
+        "today": {k: str(v) for k, v in (data.get("days") or [{}])[0].items()},
+    }, indent=1))
+
+    # delta/: what the Kindle needs to update in place instead of redrawing everything.
+    #   update.txt  -> id <md5 of dash.png>, base <md5 of the image it applies on top of>,
+    #                  'frame' lines (flip animation, fast B/W) then 'region' lines
+    #                  (changed rectangles: 'flash' = local flash, 'calm' = no-flash redraw).
+    delta = out.parent / "delta"
+    delta.mkdir(exist_ok=True)
+    for old in delta.glob("*.png"):
         old.unlink()
-    lines = [f"id {digest}"]
+    lines = [f"id {digest}", f"base {prev_digest or 'none'}"]
+    frames = 0
     if FLAP and prev:
         ft = flip_frames(prev.get("temp", state["temp"]), state["temp"])
         ff = flip_frames(prev.get("feels", state["feels"]), state["feels"])
         n = max(len(ft), len(ff))
-        x0, y0, x1, y1 = HERO_BOX
         for i in range(n):
             TILE_OVERRIDE = {"temp": ft[i] if i < len(ft) else list(state["temp"]),
                              "feels": ff[i] if i < len(ff) else list(state["feels"])}
-            frame = render(data, now).crop(HERO_BOX)
-            name = f"f{i:02d}.png"
-            frame.save(anim_dir / name, optimize=True)
-            lines.append(f"{name} {x0} {y0}")
+            render(data, now, updated).crop(hero_box).save(delta / f"f{i:02d}.png", optimize=True)
+            lines.append(f"frame f{i:02d}.png {hero_box[0]} {hero_box[1]}")
+            frames += 1
         TILE_OVERRIDE = None
-    (anim_dir / "anim.txt").write_text("\n".join(lines) + "\n")
-    print(f"wrote {out} ({', '.join(sorted(data['sources']))}); {len(lines) - 1} flip frames")
+    full_tonight = now.hour == 3 and now.minute < 15          # nightly full clean-up refresh
+    regions = None if (prev_img is None or full_tonight) else changed_regions(prev_img, img)
+    if regions is not None:
+        if frames:                                            # the flip area always gets a clean redraw
+            regions = [r for r in regions if not overlaps(r, hero_box)] + [hero_box]
+        for i, r in enumerate(regions):
+            kind = "flash" if overlaps(r, hero_box) else "calm"
+            img.crop(r).save(delta / f"r{i:02d}.png", optimize=True)
+            lines.append(f"region r{i:02d}.png {r[0]} {r[1]} {kind}")
+    else:
+        lines.append("full")
+    (delta / "update.txt").write_text("\n".join(lines) + "\n")
+    what = "full redraw" if regions is None else f"{len(regions)} regions"
+    print(f"wrote {out} ({', '.join(sorted(data['sources']))}); {frames} flip frames; {what}")
 
 
 if __name__ == "__main__":
