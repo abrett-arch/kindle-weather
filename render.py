@@ -37,6 +37,13 @@ BLACK, DARK, MID, LIGHT, PALE, WHITE = 0, 60, 120, 190, 228, 255
 
 
 # ---------------------------------------------------------------- helpers
+WARNINGS: list[str] = []
+
+
+def warn(msg: str) -> None:
+    WARNINGS.append(msg)
+    print(msg, file=sys.stderr)
+
 def font(name: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(FONTS / f"{name}.otf"), size)
 
@@ -127,7 +134,7 @@ def bom_geohash() -> str:
             if loc.get("name", "").lower() == PLACE.lower() and loc.get("state") == "TAS":
                 return loc["geohash"][:6]
     except Exception as e:  # noqa: BLE001
-        print(f"BOM search failed: {e}", file=sys.stderr)
+        warn(f"BOM search failed: {e}")
     return geohash(LAT, LON, 6)
 
 
@@ -149,7 +156,7 @@ def fetch_bom() -> dict:
         }
         out["sources"].add("BOM")
     except Exception as e:  # noqa: BLE001
-        print(f"BOM observations failed: {e}", file=sys.stderr)
+        warn(f"BOM observations failed: {e}")
 
     try:
         days = []
@@ -173,7 +180,7 @@ def fetch_bom() -> dict:
         out["days"] = days
         out["sources"].add("BOM")
     except Exception as e:  # noqa: BLE001
-        print(f"BOM daily failed: {e}", file=sys.stderr)
+        warn(f"BOM daily failed: {e}")
 
     try:
         hours = []
@@ -189,7 +196,7 @@ def fetch_bom() -> dict:
         out["hourly"] = hours
         out["sources"].add("BOM")
     except Exception as e:  # noqa: BLE001
-        print(f"BOM hourly failed: {e}", file=sys.stderr)
+        warn(f"BOM hourly failed: {e}")
     return out
 
 
@@ -259,7 +266,7 @@ def fetch_live() -> dict:
     try:
         data = fetch_bom()
     except Exception as e:  # noqa: BLE001
-        print(f"BOM failed entirely: {e}", file=sys.stderr)
+        warn(f"BOM failed entirely: {e}")
     missing = [k for k in ("now", "days", "hourly") if not data.get(k)]
     if missing:
         try:
@@ -268,7 +275,7 @@ def fetch_live() -> dict:
                 data[k] = om[k]
             data["sources"] |= om["sources"]
         except Exception as e:  # noqa: BLE001
-            print(f"Open-Meteo failed: {e}", file=sys.stderr)
+            warn(f"Open-Meteo failed: {e}")
     if not data.get("days"):
         raise SystemExit("No forecast data from any source")
     return data
@@ -800,6 +807,11 @@ def main():
     t, f = hero_values(data, now)
     state = {"temp": tile_text(t), "feels": tile_text(f), "generated": now.isoformat()}
     (out.parent / "state.json").write_text(json.dumps(state))
+    (out.parent / "status.json").write_text(json.dumps({
+        "generated": now.isoformat(), "sources": sorted(data["sources"]), "warnings": WARNINGS,
+        "now": {k: v for k, v in (data.get("now") or {}).items() if isinstance(v, (int, float, str)) or v is None},
+        "today": {k: str(v) for k, v in (data.get("days") or [{}])[0].items()},
+    }, indent=1))
 
     # flip animation: frames of the tile area going from the previous reading to this one
     prev = None
