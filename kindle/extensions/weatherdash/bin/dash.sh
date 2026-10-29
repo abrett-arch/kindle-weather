@@ -46,6 +46,34 @@ fetch_delta() {    # $1 = md5 of the new dash.png. Succeeds if the in-place upda
   done < "$D/update.txt"
 }
 
+fetch_show() {     # prefetch the coming on-the-hour board show into $DIR/show (if it's new)
+  S="$DIR/show.new"; rm -rf "$S"; mkdir -p "$S"
+  get "$BASE/show/show.txt?t=$(date +%s)" "$S/show.txt" || return 1
+  h="$(sed -n 's/^hour //p' "$S/show.txt")"
+  [ -n "$h" ] && [ "$h" != "none" ] || { rm -rf "$DIR/show"; return 1; }
+  [ -f "$DIR/show/show.txt" ] && [ "$(sed -n 's/^hour //p' "$DIR/show/show.txt")" = "$h" ] && return 0
+  while read -r kind name rest; do
+    case "$kind" in start|frame|final) get "$BASE/show/$name" "$S/$name" || return 1 ;; esac
+  done < "$S/show.txt"
+  rm -rf "$DIR/show"; mv "$S" "$DIR/show"
+}
+
+play_show() {      # the departure board: blank board, tiles clatter, settle, hold, back to weather
+  S="$DIR/show"
+  draw_full "$S/$(sed -n 's/^start //p' "$S/show.txt")"
+  while read -r kind name x y; do
+    [ "$kind" = "frame" ] || continue
+    "$FBINK" -q -W A2 -g file="$S/$name",x="$x",y="$y" 2>/dev/null
+    usleep 30000 2>/dev/null
+  done < "$S/show.txt"
+  draw_full "$S/$(sed -n 's/^final //p' "$S/show.txt")"
+  hold="$(sed -n 's/^hold //p' "$S/show.txt")"
+  sleep "${hold:-20}"
+  draw_full "$IMG"
+}
+
+show_hour() { sed -n 's/^hour //p' "$DIR/show/show.txt" 2>/dev/null; }
+
 # keep the log small
 [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 200000 ] && tail -c 50000 "$LOG" > "$LOG.old" && mv "$LOG.old" "$LOG"
 
@@ -66,7 +94,19 @@ last="$( [ -s "$IMG" ] && md5sum "$IMG" | cut -d' ' -f1 )"
 fails=0
 partials=0        # in-place updates since the last full-screen clean-up
 FULL_EVERY=12     # full flash refresh after this many in-place updates (~3 hours)
+shown=""
 while true; do
+  # on the hour: the departure-board show (Kindle's clock is right in UTC; Hobart is a whole
+  # number of hours off UTC, so UTC minute 00 is Hobart's top of the hour too)
+  H="$(date -u +%Y%m%d%H)"; MIN="$(date -u +%M | sed 's/^0//')"; MIN="${MIN:-0}"
+  if [ "$MIN" -ge 50 ]; then fetch_show; fi
+  if [ "$MIN" -le 3 ] && [ "$shown" != "$H" ]; then
+    [ "$(show_hour)" = "$H" ] || fetch_show
+    if [ "$(show_hour)" = "$H" ] && [ -s "$IMG" ]; then
+      play_show; shown="$H"; partials=0; set_light "${LIGHT:-16}"; log "hourly board show"
+    fi
+  fi
+
   if wait_wifi && check_version; then
     if { [ "$v" != "$last" ] || [ $fails -gt 1 ]; } && fetch_image; then
       sum="$(md5sum "$TMP" | cut -d' ' -f1)"
@@ -96,5 +136,6 @@ while true; do
   batt="$(lipc-get-prop com.lab126.powerd battLevel 2>/dev/null)"
   chg="$(lipc-get-prop com.lab126.powerd isCharging 2>/dev/null)"
   if [ -n "$batt" ] && [ "$batt" -lt 15 ] && [ "$chg" != "1" ]; then banner battery.png; fi
-  sleep $((REFRESH_MINUTES * 60))
+  sec="$(date -u +%S | sed 's/^0//')"            # wake on the minute, so the show starts on time
+  sleep $(( REFRESH_MINUTES * 60 - ${sec:-0} ))
 done

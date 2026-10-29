@@ -989,6 +989,114 @@ def active_message(path: str | None, now: datetime) -> dict | None:
     return msg
 
 
+# ---------------------------------------------------------------- hourly departure-board show
+BOARD_COLS = 14
+BOARD_DRUM = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:-°%"
+
+
+def board_rows(data: dict, at: datetime) -> list[str]:
+    """The three rows the board settles on: place + time, temperature, feels like."""
+    t, f = hero_values(data, at)
+    h = at.hour % 12 or 12
+    clock = f"{h}:{at.minute:02d} {'AM' if at.hour < 12 else 'PM'}"
+    def row(label, value):
+        return label + value.rjust(BOARD_COLS - len(label))
+    return [row("HOBART", clock),
+            row("TEMP", f"{t:.1f}°" if t is not None else "--.-°"),
+            row("FEELS", f"{f:.1f}°" if f is not None else "--.-°")]
+
+
+BOARD_GEOM: dict = {}
+
+
+def render_board(cells: list[list]) -> Image.Image:
+    """A black split-flap board. cells[r][c] is a character or (top, bottom) mid-flip."""
+    img = Image.new("L", (W, H), BLACK)
+    gap, lead = 9, 50
+    tile_w = (W - 2 * 46 + gap) // BOARD_COLS - gap
+    tile_h = int(tile_w * 1.5)
+    rows = len(cells)
+    block_w = BOARD_COLS * (tile_w + gap) - gap
+    block_h = rows * tile_h + (rows - 1) * lead
+    x0, y0 = (W - block_w) // 2, (H - block_h) // 2 + 10
+    BOARD_GEOM["box"] = (x0 - 6, y0 - 6, x0 + block_w + 6, y0 + block_h + 6)
+    mid = tile_h // 2
+    for r, line in enumerate(cells):
+        for c, spec in enumerate(line):
+            x, y = x0 + c * (tile_w + gap), y0 + r * (tile_h + lead)
+            if isinstance(spec, tuple):
+                top, bottom = _tile(spec[0], tile_w, tile_h), _tile(spec[1], tile_w, tile_h)
+                img.paste(top.crop((0, 0, tile_w, mid)), (x, y))
+                img.paste(bottom.crop((0, mid, tile_w, tile_h)), (x, y + mid))
+            else:
+                img.paste(_tile(spec, tile_w, tile_h), (x, y))
+    # tiles are drawn on white; knock the white corners back to the board colour
+    d = ImageDraw.Draw(img)
+    for r in range(rows):
+        for c in range(BOARD_COLS):
+            x, y = x0 + c * (tile_w + gap), y0 + r * (tile_h + lead)
+            for cx, cy in ((x, y), (x + tile_w - 1, y), (x, y + tile_h - 1), (x + tile_w - 1, y + tile_h - 1)):
+                if img.getpixel((cx, cy)) > 200:
+                    ImageDraw.floodfill(img, (cx, cy), BLACK, thresh=60)
+    return img
+
+
+def board_frames(rows: list[str], seed: int, max_frames: int = 22) -> list[list[list]]:
+    """Frames of tiles clattering from blank to `rows`. Each tile rolls through random
+    characters and settles at its own moment, rippling roughly left to right."""
+    import random
+    rng = random.Random(seed)
+    grid = [list(r.ljust(BOARD_COLS)[:BOARD_COLS]) for r in rows]
+    settle = [[min(max_frames - 1, int(3 + c * 0.75 + r * 1.2 + rng.uniform(0, 4)))
+               for c in range(BOARD_COLS)] for r in range(len(grid))]
+    cur = [[" "] * BOARD_COLS for _ in grid]
+    frames = []
+    for k in range(max(max(s) for s in settle) + 1):
+        frame = []
+        for r, line in enumerate(grid):
+            out = []
+            for c, target in enumerate(line):
+                if k >= settle[r][c]:
+                    nxt = target
+                else:
+                    nxt = rng.choice([ch for ch in BOARD_DRUM if ch != cur[r][c]])
+                if nxt != cur[r][c] and rng.random() < 0.5 and k < settle[r][c]:
+                    out.append((nxt, cur[r][c]))          # caught mid-flip
+                else:
+                    out.append(nxt)
+                cur[r][c] = nxt
+            frame.append(out)
+        frames.append(frame)
+    return frames
+
+
+def write_show(folder: Path, data: dict, now: datetime, active: bool) -> int:
+    """Publish the next on-the-hour board show: start/final screens, the flip frames
+    (cropped to the board) and show.txt telling the Kindle which UTC hour it is for."""
+    folder.mkdir(exist_ok=True)
+    for old in folder.glob("*.png"):
+        old.unlink()
+    if not active:
+        (folder / "show.txt").write_text("hour none\n")
+        return 0
+    target = now.replace(minute=0, second=0, microsecond=0)
+    if now.minute >= 30:
+        target += timedelta(hours=1)
+    rows = board_rows(data, target)
+    hour_id = target.astimezone(timezone.utc).strftime("%Y%m%d%H")
+    frames = board_frames(rows, seed=int(hour_id))
+    to_device(render_board([[" "] * BOARD_COLS for _ in rows])).save(folder / "start.png", optimize=True)
+    box = box_to_device(BOARD_GEOM["box"])
+    lines = [f"hour {hour_id}", "start start.png"]
+    for i, fr in enumerate(frames):
+        to_device(render_board(fr)).crop(box).save(folder / f"f{i:02d}.png", optimize=True)
+        lines.append(f"frame f{i:02d}.png {box[0]} {box[1]}")
+    to_device(render_board([list(r) for r in rows])).save(folder / "final.png", optimize=True)
+    lines += ["final final.png", "hold 20"]
+    (folder / "show.txt").write_text("\n".join(lines) + "\n")
+    return len(frames)
+
+
 def main():
     import hashlib
     global FLAP, TILE_OVERRIDE
@@ -1102,7 +1210,8 @@ def main():
     else:
         lines.append("full")
     (delta / "update.txt").write_text("\n".join(lines) + "\n")
-    what = "full redraw" if regions is None else f"{len(regions)} regions"
+    shows = write_show(out.parent / "show", data, now, active=not msg)
+    what = ("full redraw" if regions is None else f"{len(regions)} regions") + f"; hourly show {shows} frames"
     print(f"wrote {out} ({', '.join(sorted(data['sources']))}); {frames} flip frames; {what}")
 
 
