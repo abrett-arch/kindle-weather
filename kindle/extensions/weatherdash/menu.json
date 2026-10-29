@@ -1,0 +1,22 @@
+{
+	"items": [
+	{
+		"name": "Weather dashboard",
+		"priority": -999,
+		"items": [
+		{
+			"name": "Start dashboard",
+			"priority": 1,
+			"action": "bin/start.sh",
+			"exitmenu": true
+		},
+		{
+			"name": "Test (show sample, write report)",
+			"priority": 2,
+			"action": "bin/test.sh",
+			"exitmenu": true
+		}
+		]
+	}
+	]
+}

@@ -1,0 +1,63 @@
+name: Render dashboard
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"     # every 15 minutes (GitHub often runs these a few minutes late)
+  workflow_dispatch: {}         # "Run workflow" button for a manual refresh
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write               # lets the keep-alive step re-enable this schedule
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pillow==11.0.0
+
+      - name: Fetch the previous reading (so the tiles know what to flip from)
+        run: |
+          curl -fsS -m 20 "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/state.json" -o prev_state.json \
+            || echo "no previous state"
+
+      - name: Render
+        run: python render.py --out site/dash.png --prev prev_state.json
+
+      - name: Index page
+        run: |
+          cat > site/index.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+          <title>Hobart weather dashboard</title>
+          <body style="margin:0;background:#888;display:grid;place-items:center;min-height:100vh">
+          <img src="dash.png" style="max-width:100%;max-height:100vh" alt="Hobart weather">
+          HTML
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Keep the schedule alive (GitHub disables idle schedules after 60 days)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/dash.yml/enable" || true
