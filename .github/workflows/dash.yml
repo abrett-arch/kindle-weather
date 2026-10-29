@@ -11,7 +11,6 @@ permissions:
   contents: read
   pages: write
   id-token: write
-  actions: write               # lets the keep-alive step re-enable this schedule
 
 concurrency:
   group: pages
@@ -34,9 +33,10 @@ jobs:
 
       - name: Fetch the previous screen (what to flip from, and what changed)
         run: |
-          base="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-          curl -fsS -m 20 "$base/state.json" -o prev_state.json || echo "no previous state"
-          curl -fsS -m 20 "$base/dash.png" -o prev_dash.png || echo "no previous image"
+          base="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}"
+          t=$(date +%s)
+          curl -fsS -m 20 -H 'Cache-Control: no-cache' "$base/state.json?t=$t" -o prev_state.json || echo "no previous state"
+          curl -fsS -m 20 -H 'Cache-Control: no-cache' "$base/dash.png?t=$t" -o prev_dash.png || echo "no previous image"
 
       - name: Render
         run: python render.py --out site/dash.png --prev prev_state.json --prev-image prev_dash.png --message message.json
@@ -70,8 +70,15 @@ jobs:
       - id: deploy
         uses: actions/deploy-pages@v4
 
-      - name: Keep the schedule alive (GitHub disables idle schedules after 60 days)
-        if: always()
-        env:
+  keepalive:
+    # GitHub switches off scheduled workflows after 60 days without repository activity;
+    # re-enabling it on every run keeps it going. Separate job so only this step can do it.
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/dash.yml/enable" || true
+        run: |
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/dash.yml/enable" \
+            || echo "::warning::keep-alive failed (schedule may be disabled after 60 idle days)"

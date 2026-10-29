@@ -32,7 +32,7 @@
   h1 .gap { background: none; width: 10px; }
   h1 .gap::after { display: none; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
-  label.h { display: block; font-size: 13px; font-weight: 600; letter-spacing: .06em; color: var(--muted);
+  label.h, .h.label { display: block; font-size: 13px; font-weight: 600; letter-spacing: .06em; color: var(--muted);
             text-transform: uppercase; margin-bottom: 8px; }
   textarea { width: 100%; min-height: 96px; resize: vertical; font: inherit; font-size: 20px;
              text-transform: uppercase; border: 1px solid var(--line); border-radius: 12px; padding: 12px;
@@ -69,11 +69,12 @@
   <section class="card" id="compose">
     <label class="h" for="text">Message</label>
     <textarea id="text" maxlength="120" placeholder="Dinner's ready" autocomplete="off"></textarea>
-    <div class="count"><span id="count">0</span>/120 · shown in capitals, on flap tiles</div>
+    <div class="count"><span id="count">0</span>/120 · shown in capitals, on flap tiles · no emoji</div>
+    <p class="small">The kindle-weather repository is public, so messages are visible to anyone who looks there.</p>
   </section>
 
-  <section class="card">
-    <label class="h">Back to weather</label>
+  <section class="card" role="group" aria-labelledby="backlabel">
+    <div class="h label" id="backlabel">Back to weather</div>
     <div class="chips" id="chips">
       <button class="chip" data-min="15">In 15 min</button>
       <button class="chip" data-min="60" aria-pressed="true">In 1 hour</button>
@@ -83,7 +84,7 @@
       <button class="chip" data-at="1">At a time…</button>
     </div>
     <div class="row" id="atrow" hidden>
-      <input type="time" id="attime" value="18:00"> <span class="small">today (tomorrow if already past)</span>
+      <input type="time" id="attime" value="18:00" aria-label="Time to go back to the weather"> <span class="small">today (tomorrow if already past)</span>
     </div>
   </section>
 
@@ -92,9 +93,9 @@
   <div class="status" id="status" role="status"></div>
 
   <section class="card">
-    <label class="h">On the Kindle now</label>
-    <div class="now" id="now">Checking…</div>
-    <p class="small">Changes reach the Kindle in about 2–3 minutes.</p>
+    <div class="h label">On the Kindle now</div>
+    <div class="now" id="now" aria-live="polite">Checking…</div>
+    <p class="small">Changes reach the Kindle in about 2–3 minutes. The switch back to the weather happens at the next 15-minute update after the time you chose.</p>
     <img class="preview" id="preview" alt="What the Kindle is showing">
   </section>
 
@@ -105,9 +106,9 @@
         <li>On GitHub: <b>Settings → Developer settings → Fine-grained tokens → Generate new token</b>.</li>
         <li>Repository access: <b>Only select repositories → kindle-weather</b>.</li>
         <li>Permissions: <b>Contents → Read and write</b>. Expiration: up to you (you'll repeat this when it expires).</li>
-        <li>Paste the token below. It's kept only on this phone.</li>
+        <li>Paste the token below. It's kept only in this app on this phone. If you added the page to your home screen, paste it there, inside the home-screen app.</li>
       </ol>
-      <input type="password" id="token" placeholder="github_pat_…" autocomplete="off">
+      <input type="password" id="token" placeholder="github_pat_…" autocomplete="off" aria-label="GitHub token">
       <div class="row">
         <button class="secondary" id="savetok">Save token</button>
         <button class="secondary" id="forget">Forget</button>
@@ -123,13 +124,18 @@ const API = `https://api.github.com/repos/${REPO}/contents/${FILE}`;
 const $ = id => document.getElementById(id);
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  set(k, v) { try { localStorage.setItem(k, v); return localStorage.getItem(k) === v; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem(k); } catch (e) {} },
 };
+const KEY = "kindle-weather:token";
+if (!store.get(KEY) && store.get("kindle_token")) {            // move a token saved by the first version
+  if (store.set(KEY, store.get("kindle_token"))) store.del("kindle_token");
+}
 let choice = { min: 60 };
+let pending = null;               // what we just sent, until the published state catches up
 
 function status(msg, kind) { const s = $("status"); s.textContent = msg; s.className = "status " + (kind || ""); }
-function token() { return store.get("kindle_token"); }
+function token() { return store.get(KEY); }
 function refreshSetup() {
   const has = !!token();
   $("setupsum").textContent = has ? "This phone is set up (token saved)" : "Set up this phone (needed once)";
@@ -154,6 +160,7 @@ function untilTime() {
   if (choice.never) return null;
   if (choice.midnight) { const d = new Date(now); d.setHours(24, 0, 0, 0); return isoLocal(d); }
   if (choice.at) {
+    if (!/^\d\d:\d\d/.test($("attime").value)) return "invalid";
     const [h, m] = $("attime").value.split(":").map(Number);
     const d = new Date(now); d.setHours(h, m, 0, 0);
     if (d <= now) d.setDate(d.getDate() + 1);
@@ -164,42 +171,64 @@ function untilTime() {
 
 function b64(str) { return btoa(String.fromCharCode(...new TextEncoder().encode(str))); }
 
+function problem(code, step) {
+  if (code === 401) { $("setupbox").open = true; return "GitHub no longer accepts the saved token (it may have expired). Make a new one and save it below."; }
+  if (code === 403) return "the token isn't allowed to change kindle-weather. Check it has Contents: Read and write.";
+  if (code === 404 && step === "read") return "the token can't see the kindle-weather repository. Check its repository access.";
+  return `GitHub answered ${code}. Try again in a minute.`;
+}
+
 async function write(payload, label) {
   const t = token();
-  if (!t) { status("Set up this phone first (bottom of the page).", "err"); $("setupbox").open = true; return; }
+  if (!t) { status("Set up this phone first (bottom of the page).", "err"); $("setupbox").open = true; return false; }
   const headers = { "Authorization": `Bearer ${t}`, "Accept": "application/vnd.github+json",
                     "X-GitHub-Api-Version": "2022-11-28" };
   $("send").disabled = $("clear").disabled = true;
   status("Sending…");
   try {
-    let sha;
-    const cur = await fetch(API, { headers, cache: "no-store" });
-    if (cur.ok) sha = (await cur.json()).sha;
-    else if (cur.status !== 404) throw new Error(cur.status === 401 ? "the token was refused — set it up again" : `GitHub said ${cur.status}`);
-    const res = await fetch(API, { method: "PUT", headers, body: JSON.stringify({
-      message: label, content: b64(JSON.stringify(payload, null, 1) + "\n"), ...(sha ? { sha } : {}) }) });
-    if (!res.ok) throw new Error(res.status === 401 || res.status === 403
-      ? "the token can't write to kindle-weather — check its Contents permission" : `GitHub said ${res.status}`);
-    status(payload.text ? "Sent. It'll appear on the Kindle in about 2–3 minutes." : "Done. The weather comes back in about 2–3 minutes.", "ok");
+    for (let attempt = 0; attempt < 2; attempt++) {           // retry once if the file changed underneath us
+      const cur = await fetch(API, { headers, cache: "no-store" });
+      if (!cur.ok) throw new Error(problem(cur.status, "read"));
+      const sha = (await cur.json()).sha;
+      const res = await fetch(API, { method: "PUT", headers, body: JSON.stringify({
+        message: label, content: b64(JSON.stringify(payload, null, 1) + "\n"), sha }) });
+      if (res.ok) {
+        status(payload.text ? "Sent. It'll appear on the Kindle in about 2–3 minutes."
+                            : "Done. The weather comes back in about 2–3 minutes.", "ok");
+        pending = { text: payload.text, at: Date.now() };
+        $("now").textContent = payload.text ? "Queued: " + payload.text.toUpperCase() + " (updating…)" : "Queued: back to weather (updating…)";
+        return true;
+      }
+      if ((res.status === 409 || res.status === 422) && attempt === 0) continue;
+      throw new Error(problem(res.status, "write"));
+    }
   } catch (e) {
-    status("Couldn't send: " + e.message, "err");
+    const msg = e instanceof TypeError ? "no connection to GitHub. Check the phone is online and try again." : e.message;
+    status("Couldn't send: " + msg, "err");
   } finally {
     $("send").disabled = $("clear").disabled = false;
   }
+  return false;
 }
 
 $("send").addEventListener("click", () => {
   const text = $("text").value.trim();
   if (!text) { status("Type a message first.", "err"); return; }
-  write({ text, until: untilTime() }, "Kindle message");
+  const until = untilTime();
+  if (until === "invalid") { status("Pick a time first.", "err"); return; }
+  write({ text, until }, "Kindle message");
 });
 $("clear").addEventListener("click", () => write({ text: "", until: null }, "Kindle back to weather"));
 $("savetok").addEventListener("click", () => {
   const v = $("token").value.trim();
   if (!v) return;
-  store.set("kindle_token", v); $("token").value = ""; refreshSetup(); status("Token saved on this phone.", "ok");
+  if (!store.set(KEY, v)) {
+    status("Couldn't save the token here. If you're in Safari, try saving it inside the home-screen app instead.", "err");
+    return;
+  }
+  $("token").value = ""; refreshSetup(); status("Token saved on this phone.", "ok");
 });
-$("forget").addEventListener("click", () => { store.del("kindle_token"); refreshSetup(); status("Token removed from this phone."); });
+$("forget").addEventListener("click", () => { store.del(KEY); store.del("kindle_token"); refreshSetup(); status("Token removed from this phone."); });
 
 function fmt(iso) {
   const d = new Date(iso), now = new Date();
@@ -209,10 +238,17 @@ function fmt(iso) {
 async function showNow() {
   try {
     const s = await (await fetch("showing.json?t=" + Date.now(), { cache: "no-store" })).json();
-    $("now").innerHTML = s.mode === "message"
-      ? `Message: <b>${s.text.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</b><br>` +
-        (s.until ? `Weather returns at ${fmt(s.until)}` : "Until you clear it")
-      : "<b>Weather</b>";
+    if (pending) {
+      const caught = pending.text ? (s.mode === "message" && s.text === pending.text) : s.mode === "weather";
+      if (caught || Date.now() - pending.at > 8 * 60000) pending = null;
+      else { $("preview").src = "preview.png?t=" + Date.now(); return; }
+    }
+    const now = $("now"); now.textContent = "";
+    const b = document.createElement("b");
+    if (s.mode === "message") {
+      now.append("Message: "); b.textContent = String(s.text || ""); now.append(b, document.createElement("br"));
+      now.append(s.until ? `Weather returns around ${fmt(s.until)}` : "Until you clear it");
+    } else { b.textContent = "Weather"; now.append(b); }
   } catch (e) { $("now").textContent = "Couldn't check right now."; }
   $("preview").src = "preview.png?t=" + Date.now();
 }
