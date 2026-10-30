@@ -109,6 +109,9 @@ stop framework 2>/dev/null && log "stopped framework"
 initctl stop webreader >/dev/null 2>&1
 lipc-set-prop com.lab126.powerd preventScreenSaver 1
 set_light "${LIGHT:-16}" && log "light ${LIGHT:-16}/24"
+for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do   # idle most of the time: save power
+  [ -w "$g" ] && echo powersave > "$g" 2>/dev/null && log "cpu governor powersave"
+done
 trap - TERM
 sleep 2
 
@@ -118,7 +121,7 @@ fails=0           # consecutive minutes without a connection
 partials=0        # in-place updates since the last full-screen clean-up
 FULL_EVERY=12     # full flash refresh after this many in-place updates (~3 hours)
 banner_up=""      # a notice is on screen: the next good update redraws everything
-shown=""
+shown=""; updated_slot=""; batt_slot=""; trim_hour=""
 while true; do
   H="$(date -u +%Y%m%d%H)"; MIN="$(date -u +%M | sed 's/^0//')"; MIN="${MIN:-0}"
   online=""; wait_wifi && online=1
@@ -135,7 +138,9 @@ while true; do
 
   # every ten minutes (at :05, :15, ...): install newer dashboard code from GitHub, then restart.
   # The updater runs from a copy, so it can safely replace its own file.
-  if [ -n "$online" ] && [ $(( MIN % 10 )) -eq 5 ]; then
+  slot="$H$(( MIN / 10 ))"
+  if [ -n "$online" ] && [ $(( MIN % 10 )) -ge 5 ] && [ "$slot" != "$updated_slot" ]; then
+    updated_slot="$slot"
     cp -f "$DIR/bin/selfupdate.sh" "$DIR/selfupdate.run" 2>/dev/null
     if sh "$DIR/selfupdate.run" >> "$LOG" 2>&1; then
       log "restarting on new code"
@@ -163,10 +168,18 @@ while true; do
   fi
   batt="$(lipc-get-prop com.lab126.powerd battLevel 2>/dev/null)"
   chg="$(lipc-get-prop com.lab126.powerd isCharging 2>/dev/null)"
-  if [ -n "$batt" ] && [ "$batt" -lt 15 ] && [ "$chg" != "1" ]; then
+  if [ "$H$(( MIN / 15 ))" != "$batt_slot" ]; then  # battery log, read over USB: time,level,charging
+    batt_slot="$H$(( MIN / 15 ))"
+    echo "$(date -u '+%Y-%m-%dT%H:%MZ'),${batt:-?},${chg:-?}" >> "$DIR/battery.csv"
+    [ "$(wc -l < "$DIR/battery.csv")" -gt 3000 ] && tail -n 2000 "$DIR/battery.csv" > "$DIR/battery.tmp" && cat "$DIR/battery.tmp" > "$DIR/battery.csv"
+  fi
+  if [ -n "$batt" ] && [ "$batt" -lt 20 ] && [ "$chg" != "1" ]; then
     [ -z "$banner_up" ] && banner battery.png && banner_up=1
   fi
-  [ "$MIN" -eq 30 ] && trim_log
+  [ "$H" != "$trim_hour" ] && trim_hour="$H" && trim_log
+  # on battery, check less often, except around the hour so the board starts on time
+  every="$REFRESH_MINUTES"
+  if [ "$chg" != "1" ] && [ "$MIN" -ge 4 ] && [ "$MIN" -lt 47 ]; then every="${BATTERY_REFRESH_MINUTES:-3}"; fi
   sec="$(date -u +%S | sed 's/^0//')"            # wake on the minute, so the show starts on time
-  sleep $(( REFRESH_MINUTES * 60 - ${sec:-0} ))
+  sleep $(( every * 60 - ${sec:-0} ))
 done
