@@ -126,6 +126,15 @@
 </main>
 
 <script>
+const PAGE_VERSION = "2026-10-31.2";               // bump when the page changes (also in page_version.txt)
+(async () => {                                     // home-screen apps keep old copies: reload if stale
+  try {
+    const v = (await (await fetch("page_version.txt?t=" + Date.now(), { cache: "no-store" })).text()).trim();
+    if (v && v !== PAGE_VERSION && !location.search.includes("v=" + v)) {
+      location.replace(location.pathname + "?v=" + encodeURIComponent(v));
+    }
+  } catch (e) {}
+})();
 const MSG_REPO = "abrett-arch/kindle-messages";       // private: messages never touch the public site
 const API = path => `https://api.github.com/repos/${MSG_REPO}/contents/${path}`;
 const $ = id => document.getElementById(id);
