@@ -123,6 +123,18 @@ apply_update() {   # $TMP holds the new image (md5 $v): flip, then patch in plac
   last="$v"; banner_up=""
 }
 
+show_banner() {    # put a notice up and remember which, so a redraw can put it back
+  banner "$1" && banner_up=1 && banner_name="$1"
+}
+
+redraw_now() {     # full redraw of whatever should be on screen (something may have blanked it)
+  if [ -n "$msg_active" ] && [ -s "$DIR/message.png" ]; then draw_full "$DIR/message.png"
+  elif [ -s "$IMG" ]; then draw_full "$IMG"; partials=0
+  else return 1; fi
+  [ -n "$banner_up" ] && [ -n "$banner_name" ] && banner "$banner_name"
+  log "redrew screen ($1)"
+}
+
 trim_log() {       # keep the log under ~200 KB (truncate in place: stdout stays attached)
   if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 200000 ]; then
     tail -c 50000 "$LOG" > "$LOG.old" && cat "$LOG.old" > "$LOG"; rm -f "$LOG.old"
@@ -154,6 +166,8 @@ OFFLINE_NOTICE_AFTER=1200  # weak wifi drops the odd check: only show the notice
 partials=0        # in-place updates since the last full-screen clean-up
 FULL_EVERY=12     # full flash refresh after this many in-place updates (~3 hours)
 banner_up=""      # a notice is on screen: the next good update redraws everything
+banner_name=""    # which notice (offline.png or battery.png)
+prev_chg=""       # charger state at the last check: plugging in or out can blank the screen
 shown=""; updated_slot=""; batt_slot=""; trim_hour=""
 MSG_KEY="$(msg_key)"; msg_active=""; msg_shown=""; msg_until=0
 [ -n "$MSG_KEY" ] && log "private messages: on" || log "private messages: no key in messages_key.txt"
@@ -175,6 +189,8 @@ while true; do
     [ "$(show_hour)" = "$H" ] || { [ -n "$online" ] && fetch_show; }
     if [ "$(show_hour)" = "$H" ] && [ -s "$IMG" ]; then
       play_show; shown="$H"; partials=0; banner_up=""; set_light "${LIGHT:-16}"; log "hourly board show"
+    elif [ -z "$online" ]; then  # no board offline: still refresh the screen once an hour
+      redraw_now "hourly, offline"; shown="$H"
     fi
   fi
 
@@ -214,18 +230,22 @@ while true; do
       lipc-set-prop com.lab126.cmd wirelessEnable 1 2>/dev/null; log "wifi restarted to rejoin"
     fi
     if [ -z "$banner_up" ] && [ $(( now - fail_since )) -ge $OFFLINE_NOTICE_AFTER ]; then
-      banner offline.png && banner_up=1
+      show_banner offline.png
     fi
   fi
   batt="$(lipc-get-prop com.lab126.powerd battLevel 2>/dev/null)"
   chg="$(lipc-get-prop com.lab126.powerd isCharging 2>/dev/null)"
+  if [ -n "$prev_chg" ] && [ -n "$chg" ] && [ "$chg" != "$prev_chg" ]; then
+    redraw_now "charger $( [ "$chg" = 1 ] && echo plugged in || echo unplugged )"
+  fi
+  [ -n "$chg" ] && prev_chg="$chg"
   if [ "$H$(( MIN / 15 ))" != "$batt_slot" ]; then  # battery log, read over USB: time,level,charging
     batt_slot="$H$(( MIN / 15 ))"
     echo "$(date -u '+%Y-%m-%dT%H:%MZ'),${batt:-?},${chg:-?}" >> "$DIR/battery.csv"
     [ "$(wc -l < "$DIR/battery.csv")" -gt 3000 ] && tail -n 2000 "$DIR/battery.csv" > "$DIR/battery.tmp" && cat "$DIR/battery.tmp" > "$DIR/battery.csv"
   fi
   if [ -n "$batt" ] && [ "$batt" -lt 20 ] && [ "$chg" != "1" ]; then
-    [ -z "$banner_up" ] && banner battery.png && banner_up=1
+    [ -z "$banner_up" ] && show_banner battery.png
   fi
   [ "$H" != "$trim_hour" ] && trim_hour="$H" && trim_log
   # on battery, check less often, except around the hour so the board starts on time
