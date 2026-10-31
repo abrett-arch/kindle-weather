@@ -49,7 +49,11 @@ LOG="$DIR/test.log"
   if [ $rc -ne 0 ]; then out=$("$FBINK" -W GL16 -g file="$DIR/offline.png",x="$bx",y="$by" 2>&1); rc=$?; echo "$out" | head -2; echo "GL16 exit=$rc"; fi
   sleep 4
 
-  echo "--- stage 5: final full refresh"
+  echo "--- stage 5: final full refresh, then back to the Kindle home screen"
   "$FBINK" -c -f -g file="$DIR/sample.png" >/dev/null 2>&1; echo "exit=$?"
+  sleep 4
+  "$FBINK" -q -c -f -m -y 20 "Test done. Choose Start dashboard in KUAL to run it." 2>/dev/null
+  sleep 4
+  lipc-set-prop com.lab126.appmgrd start app://com.lab126.booklet.home 2>/dev/null
   echo "=== done"
 } > "$LOG" 2>&1

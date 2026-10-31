@@ -27,6 +27,17 @@ S="$DIR/show.preview"
   t1=$(uptime_ms); echo "clatter ms: $((t1 - t0))"
   draw_full "$S/$(sed -n 's/^final //p' "$S/show.txt")"
   sleep 12
-  if [ -s "$S/dash.png" ]; then draw_full "$S/dash.png"; else draw_full "$DIR/sample.png"; fi
+  # If the dashboard isn't running, go back to the normal Kindle screen. Leaving a still of the
+  # weather up looked like the dashboard, but it never updates or plays the hourly board.
+  pid="$(cat "$DIR/dash.pid" 2>/dev/null)"
+  if [ -n "$pid" ] && grep -q dash.sh "/proc/$pid/cmdline" 2>/dev/null; then
+    echo "dashboard running: showing the weather"
+    if [ -s "$DIR/dash.png" ]; then draw_full "$DIR/dash.png"; else draw_full "$S/dash.png"; fi
+  else
+    echo "dashboard not running: back to the Kindle home screen"
+    "$FBINK" -q -c -f -m -y 20 "Preview done. Choose Start dashboard in KUAL to run it." 2>/dev/null
+    sleep 4
+    lipc-set-prop com.lab126.appmgrd start app://com.lab126.booklet.home 2>/dev/null
+  fi
   echo "=== done"
 } > "$LOG" 2>&1
