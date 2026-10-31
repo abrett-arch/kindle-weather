@@ -82,3 +82,30 @@ jobs:
         run: |
           gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/dash.yml/enable" \
             || echo "::warning::keep-alive failed (schedule may be disabled after 60 idle days)"
+
+  next:
+    # GitHub runs the 15-minute schedule late, often only every 40-50 minutes. BOM publishes a
+    # new Hobart observation every 10 minutes, so each run waits for the next one (about 4
+    # minutes past each ten-minute mark) and starts the following run itself. The schedule
+    # above stays as a backstop that restarts this chain if it ever breaks. (A workflow may
+    # start another run of itself with workflow_dispatch; public repositories don't pay
+    # for Actions minutes.)
+    needs: render
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          now=$(date -u +%s); m=$(( (now / 60) % 10 )); s=$(( now % 60 ))
+          wait=$(( ((14 - m) % 10) * 60 - s ))            # until the next :x4
+          [ "$wait" -lt 90 ] && wait=$(( wait + 600 ))
+          echo "next render in ${wait}s"; sleep "$wait"
+          # another run already queued or running (the schedule fired)? it carries the chain on
+          others=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/dash.yml/runs?per_page=20" \
+            -q "[.workflow_runs[] | select((.status==\"queued\" or .status==\"in_progress\" or .status==\"waiting\" or .status==\"pending\") and .id != ${GITHUB_RUN_ID})] | length")
+          if [ "${others:-0}" -gt 0 ]; then echo "another run is going; leaving it to that one"; exit 0; fi
+          gh workflow run dash.yml -R "$GITHUB_REPOSITORY" --ref main
