@@ -168,11 +168,19 @@ FULL_EVERY=12     # full flash refresh after this many in-place updates (~3 hour
 banner_up=""      # a notice is on screen: the next good update redraws everything
 banner_name=""    # which notice (offline.png or battery.png)
 prev_chg=""       # charger state at the last check: plugging in or out can blank the screen
+usb_away=""       # set while the Kindle is connected to a computer as a USB drive
 shown=""; updated_slot=""; batt_slot=""; trim_hour=""
 MSG_KEY="$(msg_key)"; msg_active=""; msg_shown=""; msg_until=0
 [ -n "$MSG_KEY" ] && log "private messages: on" || log "private messages: no key in messages_key.txt"
 if [ -s "$DIR/msg.state" ]; then msg_shown="$(sed -n 's/^id //p' "$DIR/msg.state")"; fi
 while true; do
+  # connected to a computer as a USB drive: the Kindle can't see its own files, so wait it out,
+  # then redraw (leaving USB drive mode can wipe the screen and put the Kindle to sleep)
+  if [ ! -f "$DIR/config.sh" ]; then usb_away=1; sleep 20; continue; fi
+  if [ -n "$usb_away" ]; then
+    usb_away=""; lipc-set-prop com.lab126.powerd preventScreenSaver 1 2>/dev/null
+    set_light "${LIGHT:-16}"; redraw_now "back from USB drive mode"
+  fi
   H="$(date -u +%Y%m%d%H)"; MIN="$(date -u +%M | sed 's/^0//')"; MIN="${MIN:-0}"
   online=""; wait_wifi && online=1
 
@@ -252,5 +260,12 @@ while true; do
   every="$REFRESH_MINUTES"
   if [ "$chg" != "1" ] && [ "$MIN" -ge 4 ] && [ "$MIN" -lt 47 ]; then every="${BATTERY_REFRESH_MINUTES:-3}"; fi
   sec="$(date -u +%S | sed 's/^0//')"            # wake on the minute, so the show starts on time
-  sleep $(( every * 60 - ${sec:-0} ))
+  nap=$(( every * 60 - ${sec:-0} )); t0="$(date -u +%s)"
+  sleep $nap
+  # the Kindle was asleep if far more time passed than we slept: wake up properly and redraw
+  gap=$(( $(date -u +%s) - t0 - nap ))
+  if [ $gap -gt 60 ]; then
+    lipc-set-prop com.lab126.powerd preventScreenSaver 1 2>/dev/null
+    set_light "${LIGHT:-16}"; redraw_now "woke up after about $(( gap / 60 )) min asleep"
+  fi
 done
