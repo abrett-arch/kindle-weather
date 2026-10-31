@@ -74,7 +74,38 @@ play_show() {      # the departure board: blank board, tiles clatter, settle, ho
 
 show_hour() { sed -n 's/^hour //p' "$DIR/show/show.txt" 2>/dev/null; }
 
+check_message() {  # private messages: show a new one, end one that has expired
+  [ -n "$MSG_KEY" ] || return 0
+  get_private out/state.txt "$DIR/msg.state" || return 0
+  m_id="$(sed -n 's/^id //p' "$DIR/msg.state")"
+  m_mode="$(sed -n 's/^mode //p' "$DIR/msg.state")"
+  m_until="$(sed -n 's/^until //p' "$DIR/msg.state")"; m_until="${m_until:-0}"
+  m_img="$(sed -n 's/^image //p' "$DIR/msg.state")"
+  now_s="$(date -u +%s)"
+  if [ "$m_mode" = "message" ] && { [ "$m_until" = 0 ] || [ "$m_until" -gt "$now_s" ]; }; then
+    [ "$m_id" = "$msg_shown" ] && return 0
+    get_private out/message.png "$DIR/message.tmp" || return 0
+    [ "$(md5sum "$DIR/message.tmp" | cut -d' ' -f1)" = "$m_img" ] || { rm -f "$DIR/message.tmp"; return 0; }
+    mv -f "$DIR/message.tmp" "$DIR/message.png"
+    draw_full "$DIR/message.png"
+    msg_shown="$m_id"; msg_until="$m_until"; msg_active=1; banner_up=""
+    log "showing message (until ${m_until})"
+  elif [ -n "$msg_active" ]; then
+    end_message "message cleared"
+  fi
+  msg_shown="$m_id"
+}
+
+end_message() {
+  msg_active=""
+  [ -s "$IMG" ] && draw_full "$IMG"
+  partials=0; log "$1"
+}
+
 apply_update() {   # $TMP holds the new image (md5 $v): flip, then patch in place or redraw
+  if [ -n "$msg_active" ]; then    # a message is up: keep the new weather ready, draw it later
+    mv -f "$TMP" "$IMG"; last="$v"; log "weather updated behind the message"; return 0
+  fi
   mode=full
   if [ -n "$last" ] && [ "$banner_up" = "" ] && fetch_delta "$v"; then
     grep -q '^frame' "$DIR/delta/update.txt" && play_frames "$DIR/delta" && log "flipped"
@@ -122,6 +153,9 @@ partials=0        # in-place updates since the last full-screen clean-up
 FULL_EVERY=12     # full flash refresh after this many in-place updates (~3 hours)
 banner_up=""      # a notice is on screen: the next good update redraws everything
 shown=""; updated_slot=""; batt_slot=""; trim_hour=""
+MSG_KEY="$(msg_key)"; msg_active=""; msg_shown=""; msg_until=0
+[ -n "$MSG_KEY" ] && log "private messages: on" || log "private messages: no key in messages_key.txt"
+if [ -s "$DIR/msg.state" ]; then msg_shown="$(sed -n 's/^id //p' "$DIR/msg.state")"; fi
 while true; do
   H="$(date -u +%Y%m%d%H)"; MIN="$(date -u +%M | sed 's/^0//')"; MIN="${MIN:-0}"
   online=""; wait_wifi && online=1
@@ -129,7 +163,13 @@ while true; do
   # on the hour: the departure-board show (the Kindle's clock is right in UTC, and Hobart is
   # a whole number of hours off UTC, so UTC minute 00 is Hobart's top of the hour too)
   if [ -n "$online" ] && [ "$MIN" -ge 50 ]; then fetch_show; fi
-  if [ "$MIN" -le 3 ] && [ "$shown" != "$H" ]; then
+  # a message's time is up: back to the weather, even if we're offline
+  if [ -n "$msg_active" ] && [ "$msg_until" != 0 ] && [ "$(date -u +%s)" -ge "$msg_until" ]; then
+    end_message "message time is up"
+  fi
+  if [ -n "$online" ]; then check_message; fi
+
+  if [ -z "$msg_active" ] && [ "$MIN" -le 3 ] && [ "$shown" != "$H" ]; then
     [ "$(show_hour)" = "$H" ] || { [ -n "$online" ] && fetch_show; }
     if [ "$(show_hour)" = "$H" ] && [ -s "$IMG" ]; then
       play_show; shown="$H"; partials=0; banner_up=""; set_light "${LIGHT:-16}"; log "hourly board show"
@@ -151,7 +191,7 @@ while true; do
   if [ -n "$online" ] && check_version; then
     fails=0
     if [ "$v" != "$last" ] || [ -n "$banner_up" ]; then
-      if [ "$v" = "$last" ] && [ -s "$IMG" ]; then
+      if [ "$v" = "$last" ] && [ -s "$IMG" ] && [ -z "$msg_active" ]; then
         draw_full "$IMG"; banner_up=""; partials=0; log "cleared notice"
       elif fetch_image; then
         if [ "$(md5sum "$TMP" | cut -d' ' -f1)" = "$v" ]; then apply_update

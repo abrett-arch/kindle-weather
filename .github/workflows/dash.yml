@@ -39,7 +39,7 @@ jobs:
           curl -fsS -m 20 -H 'Cache-Control: no-cache' "$base/dash.png?t=$t" -o prev_dash.png || echo "no previous image"
 
       - name: Render
-        run: python render.py --out site/dash.png --prev prev_state.json --prev-image prev_dash.png --message message.json
+        run: python render.py --out site/dash.png --prev prev_state.json --prev-image prev_dash.png
 
       - name: Message page for the iPhone
         run: cp web/* site/

@@ -55,6 +55,13 @@
   .status.ok { color: var(--ok); } .status.err { color: var(--err); }
   .now { font-size: 15px; color: var(--muted); }
   .now b { color: var(--ink); }
+  .board { background: #111; border-radius: 10px; padding: 14px 10px; display: flex; flex-direction: column;
+           gap: 8px; align-items: center; }
+  .board .line { display: flex; gap: 3px; }
+  .board span { display: inline-grid; place-items: center; width: 17px; height: 26px; border-radius: 3px;
+                color: #fff; font: 600 15px/1 -apple-system, sans-serif; position: relative;
+                background: linear-gradient(#3d3d3d 50%, #2a2a2a 50%); }
+  .board span::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: #111; }
   img.preview { width: 100%; border-radius: 10px; border: 1px solid var(--line); background: #fff; display: block; }
   details summary { cursor: pointer; color: var(--muted); font-size: 15px; }
   details ol { padding-left: 20px; font-size: 15px; }
@@ -70,7 +77,7 @@
     <label class="h" for="text">Message</label>
     <textarea id="text" maxlength="120" placeholder="Dinner's ready" autocomplete="off"></textarea>
     <div class="count"><span id="count">0</span>/120 · shown in capitals, on flap tiles · no emoji</div>
-    <p class="small">The kindle-weather repository is public, so messages are visible to anyone who looks there.</p>
+    <p class="small">Messages are private: they go to your private kindle-messages repository, never to the public weather site.</p>
   </section>
 
   <section class="card" role="group" aria-labelledby="backlabel">
@@ -95,7 +102,8 @@
   <section class="card">
     <div class="h label">On the Kindle now</div>
     <div class="now" id="now" aria-live="polite">Checking…</div>
-    <p class="small">Changes reach the Kindle in about 2–3 minutes. The switch back to the weather happens at the next 15-minute update after the time you chose.</p>
+    <p class="small">Messages reach the Kindle in about 1–2 minutes, and it goes back to the weather on its own at the time you chose.</p>
+    <div class="board" id="board" hidden aria-hidden="true"></div>
     <img class="preview" id="preview" alt="What the Kindle is showing">
   </section>
 
@@ -104,7 +112,7 @@
       <summary id="setupsum">Set up this phone</summary>
       <ol>
         <li>On GitHub: <b>Settings → Developer settings → Fine-grained tokens → Generate new token</b>.</li>
-        <li>Repository access: <b>Only select repositories → kindle-weather</b>.</li>
+        <li>Repository access: <b>Only select repositories → kindle-messages</b>.</li>
         <li>Permissions: <b>Contents → Read and write</b>. Expiration: up to you (you'll repeat this when it expires).</li>
         <li>Paste the token below. It's kept only in this app on this phone. If you added the page to your home screen, paste it there, inside the home-screen app.</li>
       </ol>
@@ -118,9 +126,8 @@
 </main>
 
 <script>
-const REPO = "abrett-arch/kindle-weather";
-const FILE = "message.json";
-const API = `https://api.github.com/repos/${REPO}/contents/${FILE}`;
+const MSG_REPO = "abrett-arch/kindle-messages";       // private: messages never touch the public site
+const API = path => `https://api.github.com/repos/${MSG_REPO}/contents/${path}`;
 const $ = id => document.getElementById(id);
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -132,10 +139,14 @@ if (!store.get(KEY) && store.get("kindle_token")) {            // move a token s
   if (store.set(KEY, store.get("kindle_token"))) store.del("kindle_token");
 }
 let choice = { min: 60 };
-let pending = null;               // what we just sent, until the published state catches up
+let pending = null;               // what we just sent, until the rendered state catches up
 
 function status(msg, kind) { const s = $("status"); s.textContent = msg; s.className = "status " + (kind || ""); }
 function token() { return store.get(KEY); }
+function headers(raw) {
+  return { "Authorization": `Bearer ${token()}`, "X-GitHub-Api-Version": "2022-11-28",
+           "Accept": raw ? "application/vnd.github.raw+json" : "application/vnd.github+json" };
+}
 function refreshSetup() {
   const has = !!token();
   $("setupsum").textContent = has ? "This phone is set up (token saved)" : "Set up this phone (needed once)";
@@ -150,53 +161,48 @@ $("chips").addEventListener("click", e => {
   $("atrow").hidden = !b.dataset.at;
 });
 
-function isoLocal(d) {                       // 2026-10-30T19:30:00+11:00
-  const p = n => String(n).padStart(2, "0");
-  const off = -d.getTimezoneOffset(), sign = off >= 0 ? "+" : "-", a = Math.abs(off);
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:00${sign}${p(Math.floor(a / 60))}:${p(a % 60)}`;
-}
-function untilTime() {
+function untilEpoch() {           // unix seconds, 0 = until cleared, null = invalid
   const now = new Date();
-  if (choice.never) return null;
-  if (choice.midnight) { const d = new Date(now); d.setHours(24, 0, 0, 0); return isoLocal(d); }
-  if (choice.at) {
-    if (!/^\d\d:\d\d/.test($("attime").value)) return "invalid";
+  if (choice.never) return 0;
+  let d;
+  if (choice.midnight) { d = new Date(now); d.setHours(24, 0, 0, 0); }
+  else if (choice.at) {
+    if (!/^\d\d:\d\d/.test($("attime").value)) return null;
     const [h, m] = $("attime").value.split(":").map(Number);
-    const d = new Date(now); d.setHours(h, m, 0, 0);
+    d = new Date(now); d.setHours(h, m, 0, 0);
     if (d <= now) d.setDate(d.getDate() + 1);
-    return isoLocal(d);
-  }
-  return isoLocal(new Date(now.getTime() + Number(choice.min || 60) * 60000));
+  } else d = new Date(now.getTime() + Number(choice.min || 60) * 60000);
+  return Math.floor(d.getTime() / 1000);
 }
-
+function clean(text) {            // one line, capitals: what the Kindle's tiles can show
+  return text.replace(/\s+/g, " ").trim().toUpperCase().slice(0, 120);
+}
 function b64(str) { return btoa(String.fromCharCode(...new TextEncoder().encode(str))); }
 
 function problem(code, step) {
   if (code === 401) { $("setupbox").open = true; return "GitHub no longer accepts the saved token (it may have expired). Make a new one and save it below."; }
-  if (code === 403) return "the token isn't allowed to change kindle-weather. Check it has Contents: Read and write.";
-  if (code === 404 && step === "read") return "the token can't see the kindle-weather repository. Check its repository access.";
+  if (code === 403) return "the token isn't allowed to change kindle-messages. Check it has Contents: Read and write.";
+  if (code === 404 && step === "read") return "the token can't see the kindle-messages repository. Check its repository access is set to kindle-messages.";
   return `GitHub answered ${code}. Try again in a minute.`;
 }
 
-async function write(payload, label) {
-  const t = token();
-  if (!t) { status("Set up this phone first (bottom of the page).", "err"); $("setupbox").open = true; return false; }
-  const headers = { "Authorization": `Bearer ${t}`, "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28" };
+async function write(text, until, label) {
+  if (!token()) { status("Set up this phone first (bottom of the page).", "err"); $("setupbox").open = true; return false; }
   $("send").disabled = $("clear").disabled = true;
   status("Sending…");
+  const body = `until ${until}\ntext ${text}\n`;
   try {
     for (let attempt = 0; attempt < 2; attempt++) {           // retry once if the file changed underneath us
-      const cur = await fetch(API, { headers, cache: "no-store" });
-      if (!cur.ok) throw new Error(problem(cur.status, "read"));
-      const sha = (await cur.json()).sha;
-      const res = await fetch(API, { method: "PUT", headers, body: JSON.stringify({
-        message: label, content: b64(JSON.stringify(payload, null, 1) + "\n"), sha }) });
+      const cur = await fetch(API("message.txt"), { headers: headers(false), cache: "no-store" });
+      if (!cur.ok && cur.status !== 404) throw new Error(problem(cur.status, "read"));
+      const sha = cur.ok ? (await cur.json()).sha : undefined;
+      const res = await fetch(API("message.txt"), { method: "PUT", headers: headers(false), body: JSON.stringify({
+        message: label, content: b64(body), ...(sha ? { sha } : {}) }) });
       if (res.ok) {
-        status(payload.text ? "Sent. It'll appear on the Kindle in about 2–3 minutes."
-                            : "Done. The weather comes back in about 2–3 minutes.", "ok");
-        pending = { text: payload.text, at: Date.now() };
-        $("now").textContent = payload.text ? "Queued: " + payload.text.toUpperCase() + " (updating…)" : "Queued: back to weather (updating…)";
+        status(text ? "Sent. It'll appear on the Kindle in about 1–2 minutes."
+                    : "Done. The Kindle goes back to the weather in about 1–2 minutes.", "ok");
+        pending = { text, at: Date.now() };
+        show(text ? { mode: "message", text, until } : { mode: "weather" }, true);
         return true;
       }
       if ((res.status === 409 || res.status === 422) && attempt === 0) continue;
@@ -212,13 +218,13 @@ async function write(payload, label) {
 }
 
 $("send").addEventListener("click", () => {
-  const text = $("text").value.trim();
+  const text = clean($("text").value);
   if (!text) { status("Type a message first.", "err"); return; }
-  const until = untilTime();
-  if (until === "invalid") { status("Pick a time first.", "err"); return; }
-  write({ text, until }, "Kindle message");
+  const until = untilEpoch();
+  if (until === null) { status("Pick a time first.", "err"); return; }
+  write(text, until, "Kindle message");
 });
-$("clear").addEventListener("click", () => write({ text: "", until: null }, "Kindle back to weather"));
+$("clear").addEventListener("click", () => write("", 0, "Kindle back to weather"));
 $("savetok").addEventListener("click", () => {
   const v = $("token").value.trim();
   if (!v) return;
@@ -226,33 +232,62 @@ $("savetok").addEventListener("click", () => {
     status("Couldn't save the token here. If you're in Safari, try saving it inside the home-screen app instead.", "err");
     return;
   }
-  $("token").value = ""; refreshSetup(); status("Token saved on this phone.", "ok");
+  $("token").value = ""; refreshSetup(); status("Token saved on this phone.", "ok"); refresh();
 });
-$("forget").addEventListener("click", () => { store.del(KEY); store.del("kindle_token"); refreshSetup(); status("Token removed from this phone."); });
+$("forget").addEventListener("click", () => { store.del(KEY); store.del("kindle_token"); refreshSetup(); status("Token removed from this phone."); refresh(); });
 
-function fmt(iso) {
-  const d = new Date(iso), now = new Date();
+function fmt(epoch) {
+  const d = new Date(epoch * 1000), now = new Date();
   const t = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   return d.toDateString() === now.toDateString() ? t : d.toLocaleDateString([], { weekday: "short" }) + " " + t;
 }
-async function showNow() {
-  try {
-    const s = await (await fetch("showing.json?t=" + Date.now(), { cache: "no-store" })).json();
-    if (pending) {
-      const caught = pending.text ? (s.mode === "message" && s.text === pending.text) : s.mode === "weather";
-      if (caught || Date.now() - pending.at > 8 * 60000) pending = null;
-      else { $("preview").src = "preview.png?t=" + Date.now(); return; }
-    }
-    const now = $("now"); now.textContent = "";
-    const b = document.createElement("b");
-    if (s.mode === "message") {
-      now.append("Message: "); b.textContent = String(s.text || ""); now.append(b, document.createElement("br"));
-      now.append(s.until ? `Weather returns around ${fmt(s.until)}` : "Until you clear it");
-    } else { b.textContent = "Weather"; now.append(b); }
-  } catch (e) { $("now").textContent = "Couldn't check right now."; }
-  $("preview").src = "preview.png?t=" + Date.now();
+function drawBoard(text) {        // a small flap-tile picture of the message
+  const board = $("board"); board.textContent = "";
+  const words = text.split(" "), lines = []; let cur = "";
+  for (const w of words) { if (cur && (cur + " " + w).length > 14) { lines.push(cur); cur = w; } else cur = cur ? cur + " " + w : w; }
+  if (cur) lines.push(cur);
+  for (const l of lines.slice(0, 6)) {
+    const row = document.createElement("div"); row.className = "line";
+    for (const ch of l) { const t = document.createElement("span"); t.textContent = ch === " " ? "" : ch; row.append(t); }
+    board.append(row);
+  }
 }
-refreshSetup(); showNow(); setInterval(showNow, 30000);
+function show(s, queued) {
+  const now = $("now"); now.textContent = "";
+  const b = document.createElement("b");
+  const active = s.mode === "message" && (!s.until || s.until > Date.now() / 1000);
+  if (active) {
+    now.append(queued ? "Queued: " : "Message: "); b.textContent = s.text; now.append(b, document.createElement("br"));
+    now.append(s.until ? `Back to the weather at ${fmt(s.until)}` : "Until you clear it");
+    drawBoard(s.text); $("board").hidden = false; $("preview").hidden = true;
+  } else {
+    if (queued) now.append("Queued: ");
+    b.textContent = "Weather"; now.append(b);
+    $("board").hidden = true; $("preview").hidden = false;
+    $("preview").src = "preview.png?t=" + Date.now();
+  }
+}
+async function refresh() {
+  if (!token()) { $("now").textContent = "Set up this phone to see and send messages."; $("board").hidden = true;
+                  $("preview").hidden = false; $("preview").src = "preview.png?t=" + Date.now(); return; }
+  try {
+    const [st, mt] = await Promise.all([
+      fetch(API("out/state.txt"), { headers: headers(true), cache: "no-store" }),
+      fetch(API("message.txt"), { headers: headers(true), cache: "no-store" })]);
+    const state = st.ok ? await st.text() : "";
+    const msg = mt.ok ? await mt.text() : "";
+    const field = (txt, k) => ((txt.match(new RegExp("^" + k + " (.*)$", "m")) || [])[1] || "").trim();
+    const text = field(msg, "text"), until = Number(field(msg, "until") || 0);
+    const rendered = field(state, "mode") || "weather";
+    if (pending) {
+      const caught = pending.text ? rendered === "message" && text === pending.text : rendered === "weather";
+      if (!caught && Date.now() - pending.at < 5 * 60000) return;
+      pending = null;
+    }
+    show(rendered === "message" && text ? { mode: "message", text, until } : { mode: "weather" }, false);
+  } catch (e) { $("now").textContent = "Couldn't check right now."; }
+}
+refreshSetup(); refresh(); setInterval(refresh, 30000);
 </script>
 </body>
 </html>

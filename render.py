@@ -1135,6 +1135,41 @@ def write_show(folder: Path, data: dict, now: datetime, active: bool) -> int:
     return len(frames)
 
 
+def build_private_message(msg_path: str, out_png: Path, now: datetime, sample: bool) -> str:
+    """For the private kindle-messages repository: read message.txt ('until <epoch|0>' and
+    'text <words>'), render the message screen for the Kindle (device orientation) and write
+    state.txt next to it. Returns a one-line summary."""
+    import hashlib
+    raw = Path(msg_path).read_text(encoding="utf-8") if Path(msg_path).is_file() else ""
+    until, text = 0, ""
+    for line in raw.splitlines():
+        if line.startswith("until "):
+            try:
+                until = int(line[6:].strip() or 0)
+            except ValueError:
+                until = 0
+        elif line.startswith("text "):
+            text = line[5:].strip()
+    msg_id = hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    state = out_png.parent / "state.txt"
+    expired = until and until <= int(now.timestamp())
+    if not text or expired:
+        if out_png.exists():
+            out_png.unlink()
+        state.write_text(f"id {msg_id}\nmode weather\n")
+        return "weather (no message)"
+    try:
+        data = sample_data(now) if sample else fetch_live()
+    except SystemExit:
+        data = None
+    until_dt = datetime.fromtimestamp(until, TZ) if until else None
+    img = to_device(render_message(text, until_dt, now, data))
+    img.save(out_png, optimize=True)
+    state.write_text(f"id {msg_id}\nmode message\nuntil {until}\nimage {hashlib.md5(out_png.read_bytes()).hexdigest()}\n")
+    return f"message until {until or 'cleared'}"
+
+
 def main():
     import hashlib
     global FLAP, TILE_OVERRIDE
@@ -1146,12 +1181,17 @@ def main():
     ap.add_argument("--prev", help="previous state.json (to animate from)")
     ap.add_argument("--fake-prev", help="pretend previous tiles, e.g. '11.6,9' (testing)")
     ap.add_argument("--prev-image", help="previous dash.png (for partial refresh)")
-    ap.add_argument("--message", help="message.json from the repository (set by the iPhone page)")
+    ap.add_argument("--message", help="(old) message.json in this repository; messages are now private")
+    ap.add_argument("--private-message", help="message.txt from the private kindle-messages repository: "
+                                               "render it to --out and write state.txt, then stop")
     a = ap.parse_args()
     FLAP = not a.plain
     now = datetime.now(TZ)
     if a.now:
         now = datetime.fromisoformat(a.now).replace(tzinfo=TZ)
+    if a.private_message:
+        print(build_private_message(a.private_message, Path(a.out), now, a.sample))
+        return
     data = sample_data(now) if a.sample else fetch_live()
 
     out = Path(a.out)

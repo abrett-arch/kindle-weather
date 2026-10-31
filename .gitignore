@@ -4,3 +4,7 @@ prev_state.json
 __pycache__/
 prev_dash.png
 files.txt
+# the Kindle's private key: never commit
+messages_key.txt
+msg.state
+message.png

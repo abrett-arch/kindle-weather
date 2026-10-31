@@ -34,6 +34,16 @@ get() {            # get URL FILE  (verified TLS only: the Kindle installs code 
   curl -fsS --connect-timeout 15 -m 90 -o "$2" "$1" 2>/dev/null
 }
 
+msg_key() {        # the read-only key for the private messages repository, if one has been added
+  sed -n 's/.*\(github_pat_[A-Za-z0-9_]*\).*/\1/p' "$DIR/messages_key.txt" 2>/dev/null | head -n 1
+}
+
+get_private() {    # get_private PATH FILE : a file from the private messages repository
+  curl -fsS --connect-timeout 15 -m 90 -H "Authorization: Bearer $MSG_KEY" \
+    -H "Accept: application/vnd.github.raw+json" -H "X-GitHub-Api-Version: 2022-11-28" \
+    -o "$2" "https://api.github.com/repos/${MSG_REPO:-abrett-arch/kindle-messages}/contents/$1" 2>/dev/null
+}
+
 set_light() {      # $1 = 0..24 (same scale as the Kindle's light slider)
   lipc-set-prop com.lab126.powerd flIntensity "$1" 2>/dev/null
   for b in /sys/class/backlight/*/brightness; do      # belt and braces if powerd ignores it

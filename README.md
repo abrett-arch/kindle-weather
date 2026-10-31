@@ -16,13 +16,14 @@ Local preview without network: `python render.py --sample --now 2026-10-30T14:00
 
 Fonts: Inter (SIL Open Font License), see `fonts/LICENSE-Inter.txt`.
 
-## Messages from the iPhone
+## Messages from the iPhone (private)
 
-`web/message.html` is published at `https://<owner>.github.io/kindle-weather/message.html`.
-Add it to the home screen. It needs a fine-grained token (only this repository, Contents:
-read and write), pasted into the page itself; it is stored only on the phone. Sending
-writes `message.json` here, which triggers a rebuild; the Kindle shows the message on
-flap tiles until the chosen time. The repository is public, so messages are too.
+`web/message.html` is published at `https://<owner>.github.io/kindle-weather/message.html`
+(the page itself holds no secrets). It writes `message.txt` to the **private**
+`kindle-messages` repository using a token kept only on the phone. A workflow there renders
+the message for the Kindle; the Kindle reads it with its own read-only key
+(`messages_key.txt` on the Kindle, never in this repository) and shows it until the chosen
+time. Nothing about messages is published on this public site.
 
 ## Every hour
 
