@@ -148,7 +148,9 @@ sleep 2
 
 if [ -s "$IMG" ]; then draw_full "$IMG"; else "$FBINK" -q -c -f -m -y 20 "Starting weather dashboard..." 2>/dev/null; fi
 last="$( [ -s "$IMG" ] && md5sum "$IMG" | cut -d' ' -f1 )"
-fails=0           # consecutive minutes without a connection
+fails=0           # consecutive checks without a connection
+fail_since=0      # when the current run of failed checks began (epoch seconds)
+OFFLINE_NOTICE_AFTER=1200  # weak wifi drops the odd check: only show the notice after 20 minutes
 partials=0        # in-place updates since the last full-screen clean-up
 FULL_EVERY=12     # full flash refresh after this many in-place updates (~3 hours)
 banner_up=""      # a notice is on screen: the next good update redraws everything
@@ -189,7 +191,8 @@ while true; do
   fi
 
   if [ -n "$online" ] && check_version; then
-    fails=0
+    [ $fails -gt 0 ] && log "connection back after $fails failed checks"
+    fails=0; fail_since=0
     if [ "$v" != "$last" ] || [ -n "$banner_up" ]; then
       if [ "$v" = "$last" ] && [ -s "$IMG" ] && [ -z "$msg_active" ]; then
         draw_full "$IMG"; banner_up=""; partials=0; log "cleared notice"
@@ -202,9 +205,17 @@ while true; do
     fi
     set_light "${LIGHT:-16}"
   else
-    fails=$((fails + 1))
+    fails=$((fails + 1)); now="$(date -u +%s)"
+    [ "$fail_since" = 0 ] && fail_since="$now"
     log "no connection ($fails); wifi=$(lipc-get-prop com.lab126.wifid cmState 2>/dev/null)"
-    [ $fails -eq 2 ] && banner offline.png && banner_up=1
+    # every 4th failed check in a row, knock wifi off and on so it rejoins the router
+    if [ $(( fails % 4 )) -eq 0 ]; then
+      lipc-set-prop com.lab126.cmd wirelessEnable 0 2>/dev/null; sleep 5
+      lipc-set-prop com.lab126.cmd wirelessEnable 1 2>/dev/null; log "wifi restarted to rejoin"
+    fi
+    if [ -z "$banner_up" ] && [ $(( now - fail_since )) -ge $OFFLINE_NOTICE_AFTER ]; then
+      banner offline.png && banner_up=1
+    fi
   fi
   batt="$(lipc-get-prop com.lab126.powerd battLevel 2>/dev/null)"
   chg="$(lipc-get-prop com.lab126.powerd isCharging 2>/dev/null)"

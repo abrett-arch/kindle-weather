@@ -31,7 +31,7 @@ banner() {         # offline.png | battery.png : pre-drawn notice over the heade
 }
 
 get() {            # get URL FILE  (verified TLS only: the Kindle installs code this way)
-  curl -fsS --connect-timeout 15 -m 90 -o "$2" "$1" 2>/dev/null
+  curl -fsS --connect-timeout 30 -m 120 --retry 2 --retry-delay 5 -o "$2" "$1" 2>/dev/null
 }
 
 msg_key() {        # the read-only key for the private messages repository, if one has been added
