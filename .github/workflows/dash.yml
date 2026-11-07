@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy_retry.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
 
@@ -67,7 +67,17 @@ jobs:
         with:
           path: site
 
+      # deploy-pages sometimes reports "Found 0 artifact(s)" a split second after the upload
+      # finished (GitHub artifact API lag). Wait and try once more before giving up.
       - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - if: steps.deploy.outcome == 'failure'
+        run: sleep 30
+
+      - id: deploy_retry
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4
 
   keepalive:
