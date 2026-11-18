@@ -111,9 +111,9 @@
     <details id="setupbox">
       <summary id="setupsum">Set up this phone</summary>
       <ol>
-        <li>On GitHub: <b>Settings → Developer settings → Fine-grained tokens → Generate new token</b>.</li>
-        <li>Repository access: <b>Only select repositories → kindle-messages</b>.</li>
-        <li>Permissions: <b>Contents → Read and write</b>. Expiration: up to you (you'll repeat this when it expires).</li>
+        <li>Tap <a href="https://github.com/settings/personal-access-tokens/new?name=Kindle+messages+(phone)&amp;description=Lets+the+Kindle+message+page+on+my+phone+write+to+kindle-messages&amp;target_name=abrett-arch&amp;expires_in=365&amp;contents=write" target="_blank" rel="noopener">make a token on GitHub</a>. The name, a one-year expiry and <b>Contents: Read and write</b> are filled in for you.</li>
+        <li>Under Repository access choose <b>Only select repositories → kindle-messages</b> (the one thing to set yourself), then <b>Generate token</b> and copy it.</li>
+        <li>When it expires, this page says so; tap the link again for a new one. Delete the old phone's token on the same GitHub page.</li>
         <li>Paste the token below. It's kept only in this app on this phone. If you added the page to your home screen, paste it there, inside the home-screen app.</li>
       </ol>
       <input type="password" id="token" placeholder="github_pat_…" autocomplete="off" aria-label="GitHub token">
@@ -126,7 +126,7 @@
 </main>
 
 <script>
-const PAGE_VERSION = "2026-10-31.2";               // bump when the page changes (also in page_version.txt)
+const PAGE_VERSION = "2026-11-18.1";               // bump when the page changes (also in page_version.txt)
 (async () => {                                     // home-screen apps keep old copies: reload if stale
   try {
     const v = (await (await fetch("page_version.txt?t=" + Date.now(), { cache: "no-store" })).text()).trim();
