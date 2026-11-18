@@ -3,6 +3,7 @@
 # Exit 0 = new code installed (caller should restart itself); 1 = nothing to do or failed.
 . /mnt/us/extensions/weatherdash/bin/lib.sh
 . "$DIR/config.sh"
+[ -s "$DIR/active_url" ] && IMAGE_URL="$(cat "$DIR/active_url")"   # the address that answered last
 BASE="${IMAGE_URL%/*}/kindle"
 N="$DIR/update.new"
 rm -rf "$N"; mkdir -p "$N"

@@ -8,3 +8,6 @@ files.txt
 messages_key.txt
 msg.state
 message.png
+.venv/
+.build/
+local/*.log

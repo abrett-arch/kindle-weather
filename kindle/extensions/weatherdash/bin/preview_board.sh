@@ -2,6 +2,7 @@
 # Play the latest published on-the-hour board show right now, then show the live weather.
 . /mnt/us/extensions/weatherdash/bin/lib.sh
 . "$DIR/config.sh"
+[ -s "$DIR/active_url" ] && IMAGE_URL="$(cat "$DIR/active_url")"   # the address that answered last
 BASE="${IMAGE_URL%/*}"
 LOG="$DIR/preview.log"
 S="$DIR/show.preview"

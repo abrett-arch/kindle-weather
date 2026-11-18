@@ -10,6 +10,10 @@ trap '' HUP TERM   # survive KUAL/UI shutdown
 IMG="$DIR/dash.png"
 TMP="$DIR/dash.tmp"
 LOG="$DIR/dash.log"
+URLS="$IMAGE_URL ${IMAGE_URLS:-}"   # where the screen may be: the main address first, then the others
+if [ -s "$DIR/active_url" ] && echo " $URLS " | grep -qF " $(cat "$DIR/active_url") "; then
+  IMAGE_URL="$(cat "$DIR/active_url")"    # the address that answered last time
+fi
 BASE="${IMAGE_URL%/*}"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
@@ -28,6 +32,31 @@ check_version() {  # sets $v to the md5 of the currently published dash.png
   get "$BASE/version.txt?t=$(date +%s)" "$DIR/version.new" || return 1
   v="$(cut -c1-32 "$DIR/version.new")"
   [ ${#v} -eq 32 ]
+}
+
+probe() {         # probe URL : true (and sets $v) if that address is serving a screen
+  curl -fsS --connect-timeout 5 -m 15 -o "$DIR/version.new" "${1%/*}/version.txt?t=$(date +%s)" 2>/dev/null || return 1
+  v="$(cut -c1-32 "$DIR/version.new")"; [ ${#v} -eq 32 ]
+}
+
+use_url() {       # switch to address $1 (remembered across restarts in active_url)
+  IMAGE_URL="$1"; BASE="${1%/*}"; echo "$1" > "$DIR/active_url"; log "switched to $1"
+}
+
+find_server() {   # the current address isn't answering: try the others from config.sh, in order
+  for u in $URLS; do
+    [ "$u" = "$IMAGE_URL" ] && continue
+    probe "$u" && { use_url "$u"; return 0; }
+  done
+  return 1
+}
+
+prefer_earlier() { # on a fallback (e.g. GitHub): go back to an earlier address (the Mac) once it answers
+  for u in $URLS; do
+    [ "$u" = "$IMAGE_URL" ] && return 1
+    probe "$u" && { use_url "$u"; return 0; }
+  done
+  return 1
 }
 
 fetch_image() {    # downloads the image named by $v (cache-busted so we never get an old copy)
@@ -169,7 +198,7 @@ banner_up=""      # a notice is on screen: the next good update redraws everythi
 banner_name=""    # which notice (offline.png or battery.png)
 prev_chg=""       # charger state at the last check: plugging in or out can blank the screen
 usb_away=""       # set while the Kindle is connected to a computer as a USB drive
-shown=""; updated_slot=""; batt_slot=""; trim_hour=""
+shown=""; updated_slot=""; pref_slot=""; batt_slot=""; trim_hour=""
 MSG_KEY="$(msg_key)"; msg_active=""; msg_shown=""; msg_until=0
 [ -n "$MSG_KEY" ] && log "private messages: on" || log "private messages: no key in messages_key.txt"
 if [ -s "$DIR/msg.state" ]; then msg_shown="$(sed -n 's/^id //p' "$DIR/msg.state")"; fi
@@ -214,7 +243,12 @@ while true; do
     fi
   fi
 
-  if [ -n "$online" ] && check_version; then
+  # on a fallback address: every ten minutes, see whether a preferred one (the Mac) is back
+  if [ -n "$online" ] && [ "$IMAGE_URL" != "${URLS%% *}" ] && [ "$slot" != "$pref_slot" ]; then
+    pref_slot="$slot"; prefer_earlier
+  fi
+
+  if [ -n "$online" ] && { check_version || find_server; }; then
     [ $fails -gt 0 ] && log "connection back after $fails failed checks"
     fails=0; fail_since=0
     if [ "$v" != "$last" ] || [ -n "$banner_up" ]; then
