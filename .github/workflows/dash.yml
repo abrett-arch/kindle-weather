@@ -1,15 +1,22 @@
 name: Render dashboard
 
 # The Mac is the Kindle's main source (a new screen every 10 minutes). This is the backstop the
-# Kindle falls back to when the Mac is asleep or off, so once an hour is enough. A plain schedule
-# only: no run starts another, and nothing re-enables the workflow. GitHub switches scheduled
-# workflows off after 60 days without a commit; turn it back on under Actions -> Render dashboard.
+# Kindle falls back to when the Mac is asleep or off, so once an hour is enough.
+#
+# Keep it within GitHub's Actions rules (the account was suspended in Nov 2026 while this ran
+# about 145 times a day, each run starting the next and holding a runner idle for up to 10
+# minutes, plus a job that re-enabled the workflow so it could never time out). So:
+#   - a plain schedule only: no run starts another run, nothing sleeps waiting for later work;
+#   - nothing re-enables the workflow: GitHub switches scheduled workflows off after 60 days
+#     without a commit; turn it back on by hand under Actions -> Render dashboard;
+#   - one short job with a timeout.
 on:
   schedule:
     - cron: "17 * * * *"       # hourly (GitHub often runs these late)
   workflow_dispatch: {}         # "Run workflow" button for a manual refresh
-  push:
+  push:                         # only when something that changes the screen or the Kindle's code changes
     branches: [main]
+    paths: [render.py, "fonts/**", "web/**", "kindle/**", .github/workflows/dash.yml]
 
 permissions:
   contents: read
@@ -23,6 +30,7 @@ concurrency:
 jobs:
   render:
     runs-on: ubuntu-latest
+    timeout-minutes: 10          # a normal run takes about a minute; never let a stuck one hold a runner
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
