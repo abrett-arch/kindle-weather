@@ -33,7 +33,7 @@ jobs:
     timeout-minutes: 10          # a normal run takes about a minute; never let a stuck one hold a runner
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy_retry.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
 
@@ -79,5 +79,17 @@ jobs:
         with:
           path: site
 
+      # GitHub's publishing service occasionally can't find the screen it was just handed
+      # (20 Nov 2026: two failures, fine an hour later). Try once more after a minute
+      # before giving up, so a passing glitch doesn't fail the run and send an email.
       - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Wait a minute before trying to publish again
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 60
+
+      - id: deploy_retry
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4
